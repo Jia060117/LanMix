@@ -36,6 +36,11 @@ pub struct TrackSnapshot {
     pub late_packets: u64,
     pub queue_overflows: u64,
     pub last_seen_ms: u64,
+    /// Lifetime diagnostics for this source identity, retained across timeline resets.
+    pub reset_count: u64,
+    pub reset_reason: String,
+    pub concealed_frames: u64,
+    pub loss_events: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -290,6 +295,10 @@ struct Slot {
     overflow: u64,
     last_frame: StereoFrame,
     fade_in: usize,
+    resets: u64,
+    reset_reason: &'static str,
+    concealed_frames: u64,
+    loss_events: u64,
 }
 
 fn receive_loop(
@@ -316,6 +325,10 @@ fn receive_loop(
             overflow: 0,
             last_frame: [0.0; 2],
             fade_in: 0,
+            resets: 0,
+            reset_reason: "initial",
+            concealed_frames: 0,
+            loss_events: 0,
         })
         .collect();
     // One extra byte detects oversized/truncated datagrams instead of accepting their prefix.
@@ -386,6 +399,8 @@ fn receive_loop(
                 overflow,
                 last_frame,
                 fade_in,
+                concealed_frames,
+                loss_events,
                 ..
             } = slot;
             timeline.set_buffer_ms(controls[index].target_buffer_ms());
@@ -404,6 +419,8 @@ fn receive_loop(
                         }
                     }
                 } else {
+                    *concealed_frames += count as u64;
+                    *loss_events += 1;
                     // Missing time must remain in the stream to preserve its source clock.
                     let previous = *last_frame;
                     for i in 0..count.min(192000) {
@@ -421,6 +438,8 @@ fn receive_loop(
                 controls[index].set_active(false);
                 controls[index].reset();
                 slot.timeline = Timeline::default();
+                slot.resets += 1;
+                slot.reset_reason = "timeout";
             }
         }
         if now.duration_since(last_snapshot) >= Duration::from_millis(80) {
@@ -440,6 +459,10 @@ fn receive_loop(
                         late_packets: slot.timeline.late,
                         queue_overflows: slot.overflow,
                         last_seen_ms: now.duration_since(slot.last_seen).as_millis() as u64,
+                        reset_count: slot.resets,
+                        reset_reason: slot.reset_reason.to_owned(),
+                        concealed_frames: slot.concealed_frames,
+                        loss_events: slot.loss_events,
                     })
                 })
                 .collect();
@@ -489,12 +512,27 @@ fn handle_packet(
             slot.retired.clear();
             slot.packets = 0;
             slot.overflow = 0;
+            slot.resets = 0;
+            slot.concealed_frames = 0;
+            slot.loss_events = 0;
         } else if changed_session {
             slot.retired.push(slot.session);
             if slot.retired.len() > 8 {
                 slot.retired.remove(0);
             }
         }
+        slot.resets += 1;
+        slot.reset_reason = if changed_key {
+            "new_source"
+        } else if !slot.online {
+            "reconnect"
+        } else if changed_session {
+            "sender_session"
+        } else if slot.rate != header.sample_rate {
+            "sample_rate"
+        } else {
+            "timeline_jump"
+        };
         control.set_active(false);
         control.set_sample_rate(header.sample_rate);
         control.reset();
@@ -515,6 +553,40 @@ fn handle_packet(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concealed_network_loss_can_be_silent_without_a_mixer_underrun() {
+        let (mut mixer, mut producers, controls, _) = new_mixer(8000, 20);
+        controls[0].set_active(true);
+        let now = Instant::now();
+        let mut timeline = Timeline::default();
+        timeline.insert(0, vec![[0.25; 2]; 400], now);
+        // Twenty milliseconds really missing; enough later PCM exists to keep
+        // the mixer primed. Missing-frame concealment is not queue starvation.
+        timeline.insert(560, vec![[0.25; 2]; 400], now);
+        timeline.drain(now + Duration::from_secs(1), |frames, count| {
+            for index in 0..count {
+                producers[0]
+                    .push(frames.map_or([0.0; 2], |f| f[index]))
+                    .unwrap();
+            }
+        });
+        let mut output = [[0.0; 2]; 80];
+        let mut audible_then_silent = false;
+        for block in 0..8 {
+            mixer.render(&mut output);
+            if block == 5 {
+                audible_then_silent = output.iter().any(|f| f[0].abs() < 1e-6);
+            }
+        }
+        assert!(
+            audible_then_silent,
+            "concealed loss should remain visible in PCM"
+        );
+        assert_eq!(timeline.lost, 160);
+        assert_eq!(controls[0].underruns(), 0);
+        assert!(controls[0].primed());
+    }
 
     #[test]
     fn selected_buffer_recovers_thirty_millisecond_reordering_without_false_loss() {
@@ -741,6 +813,10 @@ mod tests {
             overflow: 0,
             last_frame: [0.0; 2],
             fade_in: 0,
+            resets: 0,
+            reset_reason: "initial",
+            concealed_frames: 0,
+            loss_events: 0,
         };
         (slot, Arc::clone(&controls[0]), mixer)
     }
@@ -809,6 +885,8 @@ mod tests {
         assert_eq!(slot.timeline.next, Some(1_000_002));
         assert_eq!(slot.timeline.lost, 0);
         assert_eq!(slot.timeline.late, 1);
+        assert_eq!(slot.resets, 2);
+        assert_eq!(slot.reset_reason, "timeline_jump");
     }
 
     #[test]
@@ -918,6 +996,8 @@ mod tests {
         send_test_datagram(&receiver, 7, 12, 0);
         let reconnected = wait_for_track(&receiver, |track| track.session_id == 12 && track.online);
         assert_eq!(reconnected.slot, first.slot);
+        assert!(reconnected.reset_count >= 4);
+        assert_eq!(reconnected.reset_reason, "reconnect");
         assert_custom_control(control);
     }
 

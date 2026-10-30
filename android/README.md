@@ -50,11 +50,13 @@ or measured latency. Bluetooth/USB/HDMI downstream conversion is outside these
 observations. Rate options are explicit requests and may fail on a device.
 
 Auto rate uses Android's native output rate if compatible with the selected
-device's report, otherwise 48 kHz or the nearest reported supported rate. Route
-changes stop/pause/flush the old stream, join its worker, release it and the
-native receiver, then build a new stream and mixer for the new rate. If the
-worker cannot stop within three seconds, replacement is refused. Routes can
-briefly interrupt playback; this is not gapless handover.
+device's report, otherwise 48 kHz or the nearest reported supported rate. In
+0.1.3, routing is confirmed after 200 ms; duplicate or transient-null notifications
+do not rebuild reception. Same-rate route changes retain AudioTrack and the native
+receiver. A changed automatic rate still stops/joins/releases the old stream and
+builds a new mixer. Removal of an explicitly selected output also rebuilds once.
+Adding unrelated outputs no longer restarts UDP. If the worker cannot stop within
+three seconds, replacement is refused. Hardware routing can still interrupt playback.
 
 ## Audio/JNI design
 
@@ -63,23 +65,30 @@ Oboe/AAudio real-time callback. It requests THREAD_PRIORITY_AUDIO, MODE_STREAM,
 stereo ENCODING_PCM_FLOAT. It does not require PERFORMANCE_MODE_LOW_LATENCY.
 The playback buffer is separate from the network jitter buffer. Every fill uses
 one preallocated Java float array, handles partial writes, and renders approximately
-10 ms (480 stereo frames at 48 kHz, 441 at 44.1 kHz). PCM uses
+10 ms (480 stereo frames at 48 kHz, 441 at 44.1 kHz), except the compatibility
+baseline which uses the previous 1024-frame block. PCM uses
 SetFloatArrayRegion's deliberate array copy. There is no
 GetPrimitiveArrayCritical pinning.
 
-### Playback scheduling in Android 0.1.2
+### Playback scheduling in Android 0.1.3
 
-Playback modes request an effective AudioTrack buffer of 60 ms (均衡, default),
-100 ms (稳定优先), or 30 ms (响应优先). 兼容 leaves the platform buffer unchanged.
-The original allocated capacity is retained for recovery. Android may clamp the
-request; the UI displays the actual effective size separately from capacity.
-These settings change neither source buffering nor PCM/EQ processing.
+Following the user's 0.1.2 dropout report, 稳定优先 is now the default and does
+not reduce the platform buffer. 兼容基线 also retains that buffer and restores
+0.1.1's 1024-frame render/write block. On the first launch of this policy revision,
+the saved playback mode is reset once to stable; volume, EQ, rate and network
+settings are retained. Later mode changes remain saved.
+
+均衡 (60 ms requested) and 响应优先 (30 ms requested) remain experimental.
+Their original allocated capacity is retained for recovery. Android may clamp
+requests; the accepted safety floor is now retained after routing, and identical
+limits do not trigger repeated resize calls. The UI distinguishes effective size
+from capacity. These modes change neither source buffering nor PCM/EQ processing.
 
 The writer observes cumulative output underruns about every 500 ms. A new
 underrun grows the effective buffer by 50%, at least 10 ms; multiple new events
 double it, capped at platform capacity. It never shrinks an adapted target
-within a session. Routing notifications reapply the learned limit on the writer;
-an actual output-device/rate change rebuilds the stream as before. Failed resizing
+within a session. A newly confirmed route reapplies the learned limit on the writer.
+Failed resizing
 attempts to restore full capacity and disables further tuning until restart.
 
 The displayed queue estimate uses accepted stereo samples minus Android's
@@ -88,7 +97,15 @@ Inconsistent counters display unavailable. This is diagnostic only and never
 paces rendering; it does not measure downstream Bluetooth or end-to-end delay.
 Mode and requested sample rate are saved. Changing mode restarts reception.
 The UI has Chinese controls, separately identified network/output buffer health,
-and a user-operated copy-diagnostics button. See [latency validation](../docs/PLAYBACK-LATENCY.md).
+and user-operated mark-dropout and copy-diagnostics buttons. A bounded in-memory
+history survives receiver rebuilds until the Activity is recreated. It includes
+source session/reset changes, lifetime missing-frame concealment, output underruns,
+and near-silence episodes of at least 2 ms observed before AudioTrack writes.
+PCM silence also includes natural silence, mute and startup, so it is not an error
+verdict. Numeric writer metrics include render/write/fill-gap maxima, zero writes,
+and silence totals for the latest reporting window; string formatting runs on the
+UI handler. Raw native JSON and its sample time are included when copying.
+See [dropout investigation](../docs/PLAYBACK-DROPOUTS.md).
 
 `NativeBridge` (`io.lanmix.receiver`) loads `liblanmix_android.so` and exposes:
 
@@ -100,7 +117,10 @@ and a user-operated copy-diagnostics button. See [latency validation](../docs/PL
 * `nativeStop()` drops the network receiver and joins its worker; it is idempotent.
 * `nativeTracks()` returns JSON `{running, tracks, stats, meters, master}`. `tracks`
   and `stats` are the network's serialized snapshots. Track identity uses `slot`,
-  `source`, `stream_id`, and `session_id`. Meters add peak/underrun and master
+  `source`, `stream_id`, and `session_id`. Tracks also report `reset_count`,
+  `reset_reason`, `concealed_frames`, and `loss_events`; the latter totals survive
+  timeline/session resets for the same source identity, until receiver restart or
+  slot reassignment. Initial connection counts as one reset. Meters add peak/underrun and master
   clipping counters. Meters also report `buffered_ms`, `target_buffer_ms`,
   `primed`, and `drift_ppm`. Diagnostics allocate on the UI polling path only.
 * `nativeSetTrack(index, gainDb, mute, solo, eqEnabled, preampDb, float[10])`.

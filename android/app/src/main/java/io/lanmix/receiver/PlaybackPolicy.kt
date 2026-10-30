@@ -3,12 +3,12 @@ package io.lanmix.receiver
 /** Output scheduling only: these modes never alter PCM, EQ, or network buffering. */
 enum class PlaybackMode(val key: String, val label: String, val targetMs: Int?) {
     BALANCED("balanced", "均衡 · 播放队列 60 ms", 60),
-    STABLE("stable", "稳定优先 · 播放队列 100 ms", 100),
+    STABLE("stable", "稳定优先 · 系统播放缓冲", null),
     RESPONSIVE("responsive", "响应优先 · 播放队列 30 ms", 30),
-    COMPATIBLE("compatible", "兼容 · 保留系统播放缓冲", null);
+    COMPATIBLE("compatible", "兼容基线 · 0.1.1 写入方式", null);
 
     companion object {
-        fun fromKey(key: String?) = entries.find { it.key == key } ?: BALANCED
+        fun fromKey(key: String?) = entries.find { it.key == key } ?: STABLE
     }
 }
 
@@ -38,21 +38,27 @@ class PlaybackBufferTuner(
     }
 
     fun refreshRoute() {
-        if (mode == PlaybackMode.COMPATIBLE || fallback) return
+        if (mode.targetMs == null || fallback) return
         val capacity = buffer.capacityFrames.coerceAtLeast(1)
-        val result = runCatching { buffer.resize(requestedFrames.coerceIn(1, capacity)) }.getOrDefault(-1)
+        val desired = requestedFrames.coerceIn(1, capacity)
+        if (buffer.sizeFrames == desired) return
+        val result = runCatching { buffer.resize(desired) }.getOrDefault(-1)
         if (result <= 0) {
             // A rejected/unsupported limit must not prevent playback. Try to
             // restore the original capacity and keep compatibility until restart.
             fallback = true
             runCatching { buffer.resize(capacity) }
+        } else {
+            // Some routes enforce a larger minimum only while being opened.
+            // Retain the actual accepted floor after later notifications too.
+            requestedFrames = maxOf(requestedFrames, result)
         }
     }
 
     fun observeUnderruns(total: Int) {
         val delta = total - lastUnderruns
         lastUnderruns = total
-        if (delta <= 0 || mode == PlaybackMode.COMPATIBLE || fallback) return
+        if (delta <= 0 || mode.targetMs == null || fallback) return
         val capacity = buffer.capacityFrames.coerceAtLeast(1)
         val current = maxOf(buffer.sizeFrames, requestedFrames).coerceIn(1, capacity)
         if (current == capacity) return
@@ -64,7 +70,8 @@ class PlaybackBufferTuner(
 
     companion object {
         fun framesForMs(rate: Int, ms: Int): Int = ((rate.toLong() * ms + 999) / 1000).toInt().coerceAtLeast(1)
-        fun blockFrames(rate: Int): Int = framesForMs(rate, 10).coerceIn(1, 4096)
+        fun blockFrames(rate: Int, mode: PlaybackMode = PlaybackMode.BALANCED): Int =
+            if (mode == PlaybackMode.COMPATIBLE) 1024 else framesForMs(rate, 10).coerceIn(1, 4096)
     }
 }
 

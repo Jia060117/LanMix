@@ -1,5 +1,36 @@
 # Verified Android build
 
+## 0.1.3 dropout investigation and safe playback default · 2026-10-31
+
+- Package `io.lanmix.receiver`, **0.1.3 / version code 4**, API 26 minimum / 37 target.
+- Artifact: `dist/android/LanMix-0.1.3-debug.apk` from the repository root.
+- Size: **1,934,905 bytes**.
+- SHA-256: `A3065D9D94957988E44E11F5C404BC4DA8B5605E365E980B9F6A070926151B88`.
+- Both ARM release libraries rebuilt with `./android/build.ps1 -Offline`; final
+  Kotlin changes checked with `-SkipNative -Offline`. Unit tests, assemble and lint passed.
+- **18 Kotlin tests passed**, no failures/errors; lint **0 errors, 28 warnings**.
+  Warnings concern string localization, icon, extraction policy, ChromeOS ABI and
+  Gradle version; no baseline suppresses findings.
+- APK v2 signature and `zipalign -c -P 16 4` passed; version verified by `aapt2`.
+  The signing certificate matches the 0.1.1 APK for an in-place upgrade.
+- **42 Rust tests**, formatting and strict workspace Clippy passed. Existing
+  vendored CPAL compiler warnings remain; no CPAL modification in this iteration.
+- Actual host JVM `-Xcheck:jni` passed. Intentional real UDP loss of **700 frames**
+  produced **597 near-silent output frames** at 48 kHz while mixer underruns stayed
+  zero. Cumulative loss diagnostics survived a sender-session reset. Also passed
+  gated-to-audible output, concurrent controls, ownership, validation and rate restarts.
+
+Stable mode now retains system buffer capacity; compatibility mode additionally
+restores 1024-frame writes. Experimental tuning preserves device-accepted floors
+and skips unchanged resizing. Same-rate route changes retain the receiver.
+The UI copies raw source diagnostics, persistent-in-Activity history, timing and
+near-silence observations, with a manual dropout marker. See
+[findings and limitations](../docs/PLAYBACK-DROPOUTS.md).
+
+The user's physical 0.1.2 issue has not been reproduced on Android hardware by
+the agent. Passing host checks proves neither a final root cause nor that 0.1.3
+is free of physical-device dropouts. Earlier build records follow.
+
 ## 0.1.2 playback scheduling update · 2026-10-31
 
 The user confirmed 0.1.1 playback became stable without the reported crackles or

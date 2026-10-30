@@ -86,13 +86,42 @@ class PlaybackPolicyTest {
         assertEquals(buffer.capacity, buffer.size)
     }
 
+    @Test fun stableModeDoesNotShrinkThePlatformBuffer() {
+        val buffer = Buffer()
+        val tuner = PlaybackBufferTuner(48000, PlaybackMode.STABLE, buffer)
+        tuner.refreshRoute()
+        tuner.observeUnderruns(10)
+        assertTrue(buffer.requests.isEmpty())
+        assertEquals(26936, buffer.size)
+        assertEquals(480, PlaybackBufferTuner.blockFrames(48000, PlaybackMode.STABLE))
+        for (rate in listOf(8000, 44100, 48000, 96000, 192000)) {
+            assertEquals(1024, PlaybackBufferTuner.blockFrames(rate, PlaybackMode.COMPATIBLE))
+        }
+    }
+
+    @Test fun deviceAcceptedSafetyFloorSurvivesLaterRoutingNotifications() {
+        val buffer = Buffer(minimum = 4800)
+        val tuner = PlaybackBufferTuner(48000, PlaybackMode.BALANCED, buffer)
+        assertEquals(4800, buffer.size)
+        buffer.minimum = 1 // later route notification no longer enforces the clamp
+        tuner.refreshRoute()
+        assertEquals("routing must not shrink the device's accepted safety floor", 4800, buffer.size)
+    }
+
+    @Test fun unchangedRoutingDoesNotRepeatedlyResizeTheLiveTrack() {
+        val buffer = Buffer()
+        val tuner = PlaybackBufferTuner(48000, PlaybackMode.BALANCED, buffer)
+        repeat(10) { tuner.refreshRoute() }
+        assertEquals("a duplicate notification should not make a live resize call", 1, buffer.requests.size)
+    }
+
     @Test fun blocksAndModesCoverAllSupportedRates() {
         for (rate in listOf(8000, 44100, 48000, 96000, 192000)) {
             val frames = PlaybackBufferTuner.blockFrames(rate)
             assertTrue(frames in 1..4096)
             assertTrue(frames * 1000L >= rate * 10L)
         }
-        assertEquals(PlaybackMode.BALANCED, PlaybackMode.fromKey("unknown"))
+        assertEquals(PlaybackMode.STABLE, PlaybackMode.fromKey("unknown"))
         assertEquals(PlaybackMode.STABLE, PlaybackMode.fromKey("stable"))
     }
 

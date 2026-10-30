@@ -15,6 +15,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /** Lifecycle work runs serially. Only the audio worker renders and writes PCM. */
 class PlaybackEngine(
@@ -22,10 +23,19 @@ class PlaybackEngine(
     private val onStatus: (String, Boolean) -> Unit,
     private val onActual: (String) -> Unit,
     private val onReady: () -> Unit,
-    private val onFocusLost: () -> Unit
+    private val onFocusLost: () -> Unit,
+    private val onEvent: (String) -> Unit = {}
 ) {
     data class Config(val port: Int, val bufferMs: Int, val device: AudioDeviceInfo?, val rate: Int,
-                      val mode: PlaybackMode = PlaybackMode.BALANCED)
+                      val mode: PlaybackMode = PlaybackMode.STABLE)
+    private data class PlaybackReport(
+        val rate: Int, val channels: Int, val format: Int, val route: AudioDeviceInfo?,
+        val size: Int, val capacity: Int, val queued: Long?, val underruns: Int,
+        val mode: PlaybackMode, val increases: Int, val fallback: Boolean, val blockFrames: Int,
+        val maxRenderNs: Long, val maxWriteNs: Long, val maxGapNs: Long, val zeroWrites: Long,
+        val silentFrames: Long, val maxSilentFrames: Long,
+        val intervalNs: Long, val intervalSilentFrames: Long, val intervalMaxSilentFrames: Long
+    )
     private class Session(val track: AudioTrack, val live: AtomicBoolean, val worker: Thread)
     private val handler = Handler(Looper.getMainLooper())
     private val controller = Executors.newSingleThreadExecutor { Thread(it, "LanMix-lifecycle") }
@@ -37,7 +47,7 @@ class PlaybackEngine(
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
 
-    fun start(next: Config, autoRateHint: Int? = null) {
+    fun start(next: Config, autoRateHint: Int? = null, reason: String = "用户启动或设置变更") {
         if (closed) return
         config = next
         val token = generation.incrementAndGet()
@@ -45,6 +55,7 @@ class PlaybackEngine(
             try {
                 stopInternal()
                 if (generation.get() != token || closed) return@execute
+                post(token) { onEvent("接收会话 #$token 启动：$reason；${next.mode.label}") }
                 open(next, token, autoRateHint)
             } catch (e: Exception) {
                 post(token) { onStatus("无法启动：${e.message}", false) }
@@ -98,43 +109,61 @@ class PlaybackEngine(
             nativeStarted = true
             val live = AtomicBoolean(true)
             val retuneRoute = AtomicBoolean(false)
-            var observedId: Int? = null // main thread routing callback only
+            val route = AtomicReference<AudioDeviceInfo?>(null)
+            val routePolicy = PlaybackRoutePolicy(track.sampleRate, next.rate == 0)
+            val checkRoute = Runnable {
+                if (generation.get() != token || !live.get() || closed) return@Runnable
+                val actual = track.routedDevice ?: return@Runnable
+                val autoRate = OutputDevices.autoRate(manager, actual)
+                route.set(actual)
+                when (routePolicy.observe(actual.id, autoRate)) {
+                    PlaybackRoutePolicy.Action.NONE -> Unit
+                    PlaybackRoutePolicy.Action.RETUNE -> {
+                        retuneRoute.set(true)
+                        onEvent("路由确认：${OutputDevices.label(actual)}；保留接收会话")
+                    }
+                    PlaybackRoutePolicy.Action.REBUILD ->
+                        start(next, autoRate, "路由自动采样率 ${track.sampleRate} → $autoRate Hz")
+                }
+            }
             val routingListener = AudioRouting.OnRoutingChangedListener {
                 if (generation.get() != token || !live.get() || closed) return@OnRoutingChangedListener
-                val actual = track.routedDevice
-                val id = actual?.id
-                val changed = observedId != null && id != observedId
-                observedId = id
-                retuneRoute.set(true) // only the writer changes effective buffer size
-                val autoRate = OutputDevices.autoRate(manager, actual)
-                if (changed || (next.rate == 0 && actual != null && track.sampleRate != autoRate)) {
-                    // For a system-selected output, carry the new device's native rate into
-                    // this rebuild. Manual rate preferences remain explicit.
-                    start(next, if (next.rate == 0) autoRate else null)
-                }
+                handler.removeCallbacks(checkRoute)
+                handler.postDelayed(checkRoute, 200) // ignore transient and duplicate route notifications
             }
             track.addOnRoutingChangedListener(routingListener, handler)
             val worker = Thread({
                 var failure: String? = null
+                var finalUnderruns = 0
+                var finalIncreases = 0
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                     val rate = track.sampleRate
-                    val samples = FloatArray(PlaybackBufferTuner.blockFrames(rate) * 2)
+                    val samples = FloatArray(PlaybackBufferTuner.blockFrames(rate, next.mode) * 2)
                     val counter = PlaybackQueueCounter()
+                    val timing = PlaybackTiming(rate)
+                    var previousSilenceEpisodes = 0L
+                    var reportWindowStart = System.nanoTime()
                     val tuner = PlaybackBufferTuner(rate, next.mode, object : PlaybackBuffer {
                         override val capacityFrames get() = track.bufferCapacityInFrames
                         override val sizeFrames get() = track.bufferSizeInFrames
                         override fun resize(frames: Int) = track.setBufferSizeInFrames(frames)
                     })
                     track.play()
+                    handler.post(checkRoute)
                     post(token) { onReady(); onStatus("接收中 · UDP ${next.port} · 网络初始缓冲 ${next.bufferMs} ms · 自适应", true) }
                     var nextReport = SystemClock.elapsedRealtime()
                     while (live.get()) {
                         if (retuneRoute.getAndSet(false)) tuner.refreshRoute()
+                        val fillStart = System.nanoTime()
+                        timing.beginFill(fillStart)
                         NativeBridge.nativeFill(samples)
+                        timing.rendered(System.nanoTime() - fillStart, samples)
                         var offset = 0
                         while (offset < samples.size && live.get()) {
+                            val writeStart = System.nanoTime()
                             val written = track.write(samples, offset, samples.size - offset, AudioTrack.WRITE_BLOCKING)
+                            timing.wrote(System.nanoTime() - writeStart, written)
                             check(written >= 0 || !live.get()) { "AudioTrack write failed ($written)" }
                             if (written > 0) {
                                 offset += written
@@ -144,10 +173,30 @@ class PlaybackEngine(
                         }
                         val now = SystemClock.elapsedRealtime()
                         if (now >= nextReport && live.get()) {
-                            tuner.observeUnderruns(track.underrunCount)
+                            val observedUnderruns = track.underrunCount
+                            tuner.observeUnderruns(observedUnderruns)
+                            val outputChanged = observedUnderruns != finalUnderruns || tuner.increases != finalIncreases
+                            val newSilenceEpisodes = timing.silenceEpisodes - previousSilenceEpisodes
+                            previousSilenceEpisodes = timing.silenceEpisodes
+                            finalUnderruns = observedUnderruns
+                            finalIncreases = tuner.increases
                             val queued = counter.queuedFrames(track.playbackHeadPosition)
-                            val report = actualText(track, tuner, queued)
-                            post(token) { if (live.get()) onActual(report) }
+                            val report = PlaybackReport(rate, track.channelCount, track.audioFormat, route.get(),
+                                track.bufferSizeInFrames, track.bufferCapacityInFrames, queued, finalUnderruns,
+                                tuner.mode, tuner.increases, tuner.fallback, samples.size / 2,
+                                timing.maxRenderNs, timing.maxWriteNs, timing.maxFillGapNs, timing.zeroWrites,
+                                timing.silentFrames, timing.maxSilentFrames,
+                                System.nanoTime() - reportWindowStart, timing.intervalSilentFrames, timing.intervalMaxSilentFrames)
+                            timing.resetInterval()
+                            reportWindowStart = System.nanoTime()
+                            // Formatting belongs to the UI handler, outside the blocking writer.
+                            post(token) {
+                                if (live.get()) {
+                                    onActual(actualText(report))
+                                    if (outputChanged) onEvent("输出缺粮 ${report.underruns}，扩容 ${report.increases}，有效缓冲 ${report.size} 帧")
+                                    if (newSilenceEpisodes > 0) onEvent("渲染出现 $newSilenceEpisodes 段至少 2ms 的近静音，统计窗最长 ${report.intervalMaxSilentFrames} 帧；也可能是开播、静音或原曲停顿")
+                                }
+                            }
                             nextReport = now + 500
                         }
                     }
@@ -155,11 +204,15 @@ class PlaybackEngine(
                     if (live.get()) failure = e.message ?: e.javaClass.simpleName
                 } finally {
                     live.set(false)
+                    handler.removeCallbacks(checkRoute)
                     track.removeOnRoutingChangedListener(routingListener)
+                    finalUnderruns = runCatching { track.underrunCount }.getOrDefault(finalUnderruns)
                     runCatching { track.pause(); track.flush(); track.stop() }
                     runCatching { NativeBridge.nativeStop() }
                     track.release()
                     manager.abandonAudioFocusRequest(focus)
+                    val summary = "会话 #$token 结束：输出缺粮 $finalUnderruns，扩容 $finalIncreases${failure?.let { "，错误 $it" } ?: ""}"
+                    handler.post { if (!closed) onEvent(summary) } // survive generation change/rebuild
                     failure?.let { message -> post(token) { onStatus("播放已停止：$message", false) } }
                 }
             }, "LanMix-PCM-float")
@@ -192,14 +245,18 @@ class PlaybackEngine(
         handler.post { if (generation.get() == token && !closed) action() }
     }
 
-    private fun actualText(track: AudioTrack, tuner: PlaybackBufferTuner, queued: Long?): String = buildString {
-        fun ms(frames: Long) = String.format(Locale.US, "%.1f", frames * 1000.0 / track.sampleRate)
-        appendLine("实际输出：${track.routedDevice?.let(OutputDevices::label) ?: "等待系统路由"}")
-        appendLine("应用输出：${track.sampleRate} Hz · ${track.channelCount} 声道 · ${OutputDevices.encoding(track.audioFormat)}")
-        appendLine("播放缓冲上限：${ms(track.bufferSizeInFrames.toLong())} ms · ${track.bufferSizeInFrames} 帧")
-        appendLine("当前排队估算：${queued?.let { "${ms(it)} ms" } ?: "暂不可用"} · 系统容量 ${ms(track.bufferCapacityInFrames.toLong())} ms")
-        appendLine("输出缺粮 ${track.underrunCount} 次 · 自动扩容 ${tuner.increases} 次${if (tuner.fallback) " · 设备拒绝缓冲调节" else ""}")
-        appendLine("模式：${tuner.mode.label}")
+    private fun actualText(report: PlaybackReport): String = with(report) { buildString {
+        fun ms(frames: Long) = String.format(Locale.US, "%.1f", frames * 1000.0 / rate)
+        fun elapsed(ns: Long) = String.format(Locale.US, "%.2f", ns / 1_000_000.0)
+        appendLine("实际输出：${route?.let(OutputDevices::label) ?: "等待系统路由"}")
+        appendLine("应用输出：$rate Hz · $channels 声道 · ${OutputDevices.encoding(format)}")
+        appendLine("播放缓冲上限：${ms(size.toLong())} ms · $size 帧")
+        appendLine("当前排队估算：${queued?.let { "${ms(it)} ms" } ?: "暂不可用"} · 系统容量 ${ms(capacity.toLong())} ms")
+        appendLine("输出缺粮 $underruns 次 · 自动扩容 $increases 次${if (fallback) " · 设备拒绝缓冲调节" else ""}")
+        appendLine("模式：${mode.label} · 每块 $blockFrames 帧")
+        appendLine("本会话最大耗时：渲染 ${elapsed(maxRenderNs)} / 写入 ${elapsed(maxWriteNs)} / 渲染间隔 ${elapsed(maxGapNs)} ms；零写入 $zeroWrites 次")
+        appendLine("写入前静音累计 ${ms(silentFrames)} ms / 最长连续 ${ms(maxSilentFrames)} ms（含开播等待、静音和原曲静音）")
+        appendLine("最近 ${elapsed(intervalNs)} ms 统计窗：近静音 ${ms(intervalSilentFrames)} ms / 窗内最长 ${ms(intervalMaxSilentFrames)} ms")
         append("排队估算仅覆盖应用 AudioTrack；不代表端到端延迟或耳机 DAC 格式。")
-    }
+    } }
 }

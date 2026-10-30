@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.view.View
 import android.view.WindowInsets
@@ -41,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var actual: TextView
     private lateinit var capabilities: TextView
     private lateinit var networkStats: TextView
+    private lateinit var eventHistory: TextView
     private lateinit var masterMeter: TextView
     private lateinit var deviceSpinner: Spinner
     private lateinit var rateSpinner: Spinner
@@ -53,13 +55,21 @@ class MainActivity : Activity() {
     private var selectedId: Int? = null
     private var rateOptions = listOf(0)
     private var selectedRate = 0
-    private var playbackMode = PlaybackMode.BALANCED
+    private var playbackMode = PlaybackMode.STABLE
     private var updating = false
     private var requested = false
     private var running = false
     private var visible = false
     private val trackViews = mutableMapOf<Int, Pair<TextView, TextView>>()
     private val preferences by lazy { getSharedPreferences("lanmix", MODE_PRIVATE) }
+    private val diagnosticStart = SystemClock.elapsedRealtime()
+    private val history = DiagnosticHistory()
+    private var latestNativeDiagnostics = "{}"
+    private var latestNativeAt = 0L
+    private var markedDiagnostic = "尚未标记闪断"
+    private data class SourceDiagnostic(val session: Long, val lost: Long, val late: Long,
+        val overflow: Long, val underruns: Long, val resets: Long, val primed: Boolean)
+    private val sourceDiagnostics = mutableMapOf<String, SourceDiagnostic>()
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateDevices()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = updateDevices()
@@ -68,7 +78,11 @@ class MainActivity : Activity() {
         override fun run() {
             if (!visible) return
             if (NativeBridge.loadError == null && running) {
-                runCatching { updateTracks(JSONObject(NativeBridge.nativeTracks())) }
+                runCatching {
+                    latestNativeDiagnostics = NativeBridge.nativeTracks()
+                    latestNativeAt = SystemClock.elapsedRealtime() - diagnosticStart
+                    updateTracks(JSONObject(latestNativeDiagnostics))
+                }
                     .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
             }
             handler.postDelayed(this, 750)
@@ -78,6 +92,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         manager = getSystemService(AudioManager::class.java)
+        // 0.1.2's reduced output buffer was not stable on the user's route.
+        // Start this policy revision conservatively once, retaining other settings.
+        val policyUpgrade = preferences.getInt("playback_policy_revision", 0) < 1
+        if (policyUpgrade) preferences.edit().putString("playback_mode", "stable")
+            .putInt("playback_policy_revision", 1).apply()
         playbackMode = PlaybackMode.fromKey(preferences.getString("playback_mode", null))
         selectedRate = preferences.getInt("output_rate", 0)
         mix = MixState(preferences)
@@ -92,13 +111,16 @@ class MainActivity : Activity() {
             onReady = {
                 mix.resetBindings()
                 trackViews.clear()
+                sourceDiagnostics.clear()
                 sources.removeAllViews()
                 emptySources.visibility = View.VISIBLE
                 applyControl { mix.applyMaster() }
             },
-            onFocusLost = { stopReceiver("音频焦点已改变 · 点击开始恢复") }
+            onFocusLost = { stopReceiver("音频焦点已改变 · 点击开始恢复") },
+            onEvent = { recordEvent(it) }
         )
         createUi()
+        if (policyUpgrade) recordEvent("已启用稳定优先：保留系统播放缓冲；均衡/响应为试验模式")
         manager.registerAudioDeviceCallback(deviceCallback, handler)
         updateDevices()
         NativeBridge.loadError?.let {
@@ -181,8 +203,10 @@ class MainActivity : Activity() {
         rateSpinner = Spinner(this)
         output.addView(rateSpinner)
         deviceSpinner.onItemSelectedListener = selection { position ->
-            if (!updating) {
-                selectedId = devices.getOrNull(position - 1)?.id
+            if (position != deviceSpinner.selectedItemPosition) return@selection
+            val nextId = devices.getOrNull(position - 1)?.id
+            if (!updating && nextId != selectedId) {
+                selectedId = nextId
                 updateRates()
                 updateCapabilities()
                 if (requested) startReceiver()
@@ -211,7 +235,7 @@ class MainActivity : Activity() {
             }
         }
         output.addView(modeSpinner)
-        output.addView(text("先试均衡模式；稳定后可试响应优先。模式只调整播放排队，实际下限由设备决定；缺粮时自动扩容。切换会重启接收。", 12, subtle))
+        output.addView(text("默认稳定优先，保留系统播放缓冲。兼容基线还原 0.1.1 的 1024 帧写入；均衡/响应为试验模式。切换会重启接收。", 12, subtle))
         actual = text("等待启动音频输出", 13, ink).apply { setTextIsSelectable(true) }
         output.addView(actual)
 
@@ -242,19 +266,41 @@ class MainActivity : Activity() {
         val diagnostics = card(root, "网络与诊断")
         networkStats = text("本次尚未接收数据", 12, subtle).apply { setTextIsSelectable(true) }
         diagnostics.addView(networkStats)
+        eventHistory = text("暂无事件", 12, subtle).apply {
+            setTextIsSelectable(true); visibility = View.GONE
+        }
+        diagnostics.addView(Button(this).apply {
+            text = "展开最近诊断事件"; isAllCaps = false
+            setOnClickListener {
+                eventHistory.visibility = if (eventHistory.visibility == View.GONE) View.VISIBLE else View.GONE
+                text = if (eventHistory.visibility == View.VISIBLE) "收起诊断事件" else "展开最近诊断事件"
+            }
+        })
+        diagnostics.addView(eventHistory)
+        diagnostics.addView(Button(this).apply {
+            text = "标记刚才的闪断"; isAllCaps = false
+            setOnClickListener {
+                val now = SystemClock.elapsedRealtime() - diagnosticStart
+                markedDiagnostic = "+${now}ms 用户标记；音源采样时间 +${latestNativeAt}ms\n${actual.text}\n$latestNativeDiagnostics"
+                recordEvent("用户标记闪断；最近音源采样 +${latestNativeAt}ms")
+                Toast.makeText(this@MainActivity, "已保留此刻状态，可复制诊断信息", Toast.LENGTH_SHORT).show()
+            }
+        })
         diagnostics.addView(Button(this).apply {
             text = "复制诊断信息"; isAllCaps = false
             setOnClickListener {
                 val details = listOf("LanMix ${packageManager.getPackageInfo(packageName, 0).versionName}",
                     status.text, actual.text, bufferHealth.text, networkStats.text, masterMeter.text,
-                    capabilities.text).joinToString("\n\n")
+                    capabilities.text, "原始音源诊断（+${latestNativeAt}ms 采样）：\n$latestNativeDiagnostics",
+                    "最近一次闪断标记：\n$markedDiagnostic",
+                    "最近事件（本次打开应用，重建不清空）：\n${history.text()}").joinToString("\n\n")
                 getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", details))
                 Toast.makeText(this@MainActivity, "诊断信息已复制", Toast.LENGTH_SHORT).show()
             }
         })
     }
 
-    private fun startReceiver() {
+    private fun startReceiver(reason: String = "用户启动或设置变更") {
         if (!visible || NativeBridge.loadError != null) return
         val portValue = port.text.toString().toIntOrNull()
         val bufferValue = buffer.text.toString().toIntOrNull()
@@ -271,10 +317,11 @@ class MainActivity : Activity() {
         actual.text = "正在打开音频输出…"
         networkStats.text = "正在开启新的接收会话"
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        engine.start(PlaybackEngine.Config(portValue, bufferValue, devices.find { it.id == selectedId }, selectedRate, playbackMode))
+        engine.start(PlaybackEngine.Config(portValue, bufferValue, devices.find { it.id == selectedId }, selectedRate, playbackMode), reason = reason)
     }
 
     private fun stopReceiver(message: String) {
+        if (requested || running) recordEvent("停止请求：$message")
         requested = false
         running = false
         if (::startButton.isInitialized) startButton.text = "开始接收"
@@ -293,7 +340,6 @@ class MainActivity : Activity() {
 
     private fun updateDevices() {
         if (!::deviceSpinner.isInitialized) return
-        val previousIds = devices.map { it.id }
         devices = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
         val lostSelection = selectedId != null && devices.none { it.id == selectedId }
         if (lostSelection) selectedId = null
@@ -303,7 +349,9 @@ class MainActivity : Activity() {
         updateRates()
         updateCapabilities()
         updating = false
-        if (requested && (lostSelection || previousIds != devices.map { it.id })) startReceiver()
+        // AudioTrack follows actual same-rate routing. Adding an unrelated
+        // output must not tear down UDP and discard all source buffers.
+        if (requested && lostSelection) startReceiver("原首选输出已移除，回到系统默认")
     }
 
     private fun updateRates() {
@@ -346,6 +394,16 @@ class MainActivity : Activity() {
             }
             views.first.text = "${slot + 1} · ${item.optString("source")} / 流 ${item.optLong("stream_id")} · ${if (item.optBoolean("online")) "在线" else "离线"}"
             val meter = json.optJSONArray("meters")?.optJSONObject(slot)
+            val identity = "${item.optString("source")}/${item.optLong("stream_id")}"
+            val diagnostic = SourceDiagnostic(item.optLong("session_id"), item.optLong("concealed_frames"),
+                item.optLong("late_packets"), item.optLong("queue_overflows"), meter?.optLong("underruns") ?: 0,
+                item.optLong("reset_count"), meter?.optBoolean("primed") == true)
+            val previous = sourceDiagnostics.put(identity, diagnostic)
+            if (previous == null || previous != diagnostic) {
+                recordEvent("音源 $identity：会话 ${diagnostic.session}，丢帧 ${diagnostic.lost}，迟到 ${diagnostic.late}，" +
+                    "溢出 ${diagnostic.overflow}，缺粮 ${diagnostic.underruns}，重置 ${diagnostic.resets} " +
+                    "(${item.optString("reset_reason")})，${if (diagnostic.primed) "播放中" else "缓冲中"}")
+            }
             views.second.text = "来源 ${item.optInt("sample_rate")} Hz · 双声道 PCM float\n" +
                 "数据包 ${item.optLong("packets")} · 丢失帧 ${item.optLong("lost_frames")} · 迟到包 ${item.optLong("late_packets")}\n" +
                 "队列溢出 ${item.optLong("queue_overflows")} · 音源缺粮 ${meter?.optLong("underruns") ?: 0} · 峰值 ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
@@ -353,16 +411,37 @@ class MainActivity : Activity() {
         }
         trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "此通道暂无音源"; views.second.text = "等待音源连接" }
         emptySources.visibility = if (seen.isEmpty()) View.VISIBLE else View.GONE
+        val activeIdentities = (0 until (tracks?.length() ?: 0)).map { index ->
+            val track = tracks!!.getJSONObject(index)
+            "${track.optString("source")}/${track.optLong("stream_id")}"
+        }.toSet()
+        sourceDiagnostics.keys.retainAll(activeIdentities)
         val stats = json.optJSONObject("stats") ?: JSONObject()
         val meters = json.optJSONArray("meters")
         bufferHealth.text = if (seen.isEmpty()) "等待音源音频…" else seen.sorted().joinToString("\n") { slot ->
             val meter = meters?.optJSONObject(slot)
             "音源 ${slot + 1}：网络 ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · 缺粮 ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
+        var concealed = 0L
+        var lossEvents = 0L
+        var resets = 0L
+        if (tracks != null) repeat(tracks.length()) { index ->
+            val track = tracks.getJSONObject(index)
+            concealed += track.optLong("concealed_frames")
+            lossEvents += track.optLong("loss_events")
+            resets += track.optLong("reset_count")
+        }
         networkStats.text = "已接收 ${stats.optLong("received_packets")} 包 / ${stats.optLong("received_bytes")} 字节\n" +
-            "无效包 ${stats.optLong("invalid_packets")} · 拒绝音源 ${stats.optLong("rejected_sources")}"
+            "无效包 ${stats.optLong("invalid_packets")} · 拒绝音源 ${stats.optLong("rejected_sources")}\n" +
+            "本会话音源累计丢帧补偿 $concealed 帧 / $lossEvents 次 · 音源重置 $resets 次（含初次连接）\n" +
+            "丢帧补偿和重置不会增加缺粮计数；写入耗时也不直接等同于断音。"
         val master = json.optJSONObject("master")
         masterMeter.text = "峰值 ${peak(master?.optDouble("peak") ?: 0.0)} · 触发保护帧数 ${master?.optLong("clipped_frames") ?: 0}"
+    }
+
+    private fun recordEvent(event: String) {
+        history.record(SystemClock.elapsedRealtime() - diagnosticStart, event)
+        if (::eventHistory.isInitialized) eventHistory.text = history.text()
     }
 
     private fun addControls(parent: LinearLayout, control: MixControl, slot: Int?) {

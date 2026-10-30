@@ -65,6 +65,8 @@ public final class NativeBridge {
             require(snapshot.contains("\"stream_id\":7") && snapshot.contains("\"source\":\"127.0.0.1\""), "real UDP snapshot");
             require(snapshot.contains("\"target_buffer_ms\":") && snapshot.contains("\"buffered_ms\":")
                 && snapshot.contains("\"primed\":") && snapshot.contains("\"drift_ppm\":"), "buffer diagnostics cross JNI");
+            require(snapshot.contains("\"reset_count\":") && snapshot.contains("\"reset_reason\":\"new_source\"")
+                && snapshot.contains("\"concealed_frames\":") && snapshot.contains("\"loss_events\":"), "reset/loss diagnostics cross JNI");
             bridge.nativeFill(output); // process receiver lifecycle/reset while gated
             send(sender, port, 50, 50);
             bridge.nativeFill(output);
@@ -100,6 +102,39 @@ public final class NativeBridge {
         bridge.nativeStart(port, 60, 96000);
         bridge.nativeFill(new float[8192]); // maximum size; new epoch on same JVM worker
         bridge.nativeStop();
+        bridge.nativeStart(port, 60, 48000);
+        try (DatagramSocket sender = new DatagramSocket()) {
+            float[] block = new float[480 * 2];
+            bridge.nativeFill(block);
+            send(sender, port, 0, 1);
+            bridge.nativeFill(block); // acknowledge first source reset before supplying the test audio
+            bridge.nativeSetMaster(0f, false, 0f, new float[10]);
+            bridge.nativeSetTrack(0, 0f, false, false, false, 0f, new float[10]);
+            send(sender, port, 1, 50);
+            send(sender, port, 56, 50); // sequences 51..55: 700 genuinely missing frames
+            boolean heard = false;
+            int quietFramesAfterSound = 0;
+            for (int i = 0; i < 25; i++) {
+                bridge.nativeFill(block);
+                for (int sample = 0; sample < block.length; sample += 2) {
+                    if (Math.abs(block[sample]) > .01f) heard = true;
+                    if (heard && Math.abs(block[sample]) < 1e-6f && Math.abs(block[sample + 1]) < 1e-6f)
+                        quietFramesAfterSound++;
+                }
+            }
+            String snapshot = bridge.nativeTracks();
+            require(heard && quietFramesAfterSound > 200, "real missing-packet concealment produces a PCM dip");
+            require(snapshot.contains("\"concealed_frames\":700") && snapshot.contains("\"loss_events\":1"), "lifetime missing-frame diagnostics");
+            require(!java.util.regex.Pattern.compile("\"underruns\":[1-9]").matcher(snapshot).find(), "concealment is not mixer starvation");
+            System.out.println("JNI real UDP loss: 700 missing frames, " + quietFramesAfterSound + " quiet frames after sound, mixer underruns remain zero");
+            byte[] nextSession = packet(0);
+            ByteBuffer.wrap(nextSession).order(ByteOrder.LITTLE_ENDIAN).putLong(4, 0x11223345L);
+            sender.send(new DatagramPacket(nextSession, nextSession.length, InetAddress.getLoopbackAddress(), port));
+            Thread.sleep(100);
+            String afterReset = bridge.nativeTracks();
+            require(afterReset.contains("\"concealed_frames\":700") && afterReset.contains("\"reset_count\":2")
+                && afterReset.contains("\"reset_reason\":\"sender_session\""), "lifetime loss evidence survives a sender-session reset");
+        } finally { bridge.nativeStop(); }
         for (int rate : new int[] {8000, 44100, 48000, 96000, 192000}) {
             bridge.nativeStart(port, 150, rate);
             try {
