@@ -1,0 +1,13 @@
+[package]
+name = "lanmix-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cpal.workspace = true
+lanmix-core.workspace = true
+rtrb.workspace = true
+serde.workspace = true
+

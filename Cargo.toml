@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/lanmix-proto",
+    "crates/lanmix-core",
+    "crates/lanmix-network",
+    "crates/lanmix-audio",
+    "crates/lanmix-sender",
+    "crates/lanmix-receiver",
+    "crates/lanmix-android",
+]
+default-members = ["crates/lanmix-sender", "crates/lanmix-receiver"]
+exclude = ["vendor/cpal"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cpal = "0.16"
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+rtrb = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+socket2 = "0.6"
+ctrlc = "3"
+lanmix-proto = { path = "crates/lanmix-proto" }
+lanmix-core = { path = "crates/lanmix-core" }
+lanmix-network = { path = "crates/lanmix-network" }
+lanmix-audio = { path = "crates/lanmix-audio" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[patch.crates-io]
+cpal = { path = "vendor/cpal" }
+

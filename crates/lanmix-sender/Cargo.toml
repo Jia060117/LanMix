@@ -1,0 +1,15 @@
+[package]
+name = "lanmix-sender"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+cpal.workspace = true
+ctrlc.workspace = true
+lanmix-proto.workspace = true
+lanmix-audio.workspace = true
+rtrb.workspace = true
+

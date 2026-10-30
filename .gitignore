@@ -1,0 +1,10 @@
+/target/
+/dist/
+/.tools/
+/.local/
+/android/.gradle/
+/android/.kotlin/
+/android/**/build/
+/android/local.properties
+*.log
+
