@@ -52,10 +52,10 @@ public final class NativeBridge {
         bridge.nativeStart(port, 60, 48000);
         try (DatagramSocket sender = new DatagramSocket()) {
             bridge.nativeSetMaster(-6f, true, -3f, new float[10]);
-            float[] output = new float[2048];
+            float[] output = new float[480 * 2]; // current 10 ms Android write block
             Arrays.fill(output, Float.NaN);
             bridge.nativeFill(output); // first fill claims worker TLS before packets
-            require(Arrays.equals(output, new float[2048]), "fill overwrites all Java samples");
+            require(Arrays.equals(output, new float[480 * 2]), "fill overwrites all Java samples");
             rejected(() -> bridge.nativeFill(new float[3]));
             rejected(() -> bridge.nativeFill(new float[8194]));
             rejected(() -> bridge.nativeSetMaster(0f, false, 0f, new float[9]));
@@ -68,7 +68,7 @@ public final class NativeBridge {
             bridge.nativeFill(output); // process receiver lifecycle/reset while gated
             send(sender, port, 50, 50);
             bridge.nativeFill(output);
-            require(Arrays.equals(output, new float[2048]), "unknown identity starts muted");
+            require(Arrays.equals(output, new float[480 * 2]), "unknown identity starts muted");
             bridge.nativeSetTrack(0, -3f, false, true, true, -2f, new float[10]);
             send(sender, port, 100, 50);
             bridge.nativeFill(output);
@@ -100,6 +100,15 @@ public final class NativeBridge {
         bridge.nativeStart(port, 60, 96000);
         bridge.nativeFill(new float[8192]); // maximum size; new epoch on same JVM worker
         bridge.nativeStop();
-        System.out.println("JNI lifecycle, array validation, JSON, all six exports, and 48k->96k restart passed");
+        for (int rate : new int[] {8000, 44100, 48000, 96000, 192000}) {
+            bridge.nativeStart(port, 150, rate);
+            try {
+                float[] block = new float[((rate + 99) / 100) * 2];
+                Arrays.fill(block, Float.NaN);
+                bridge.nativeFill(block);
+                require(Arrays.equals(block, new float[block.length]), "10 ms fill at " + rate);
+            } finally { bridge.nativeStop(); }
+        }
+        System.out.println("JNI lifecycle, array validation, JSON, all six exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
     }
 }

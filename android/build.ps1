@@ -54,8 +54,8 @@ if (-not $SkipNative) {
 $cachedGradle = Get-ChildItem -LiteralPath (Join-Path $env:USERPROFILE '.gradle\wrapper\dists\gradle-9.6.1-bin') -Recurse -Filter gradle.bat -ErrorAction SilentlyContinue | Select-Object -First 1
 $gradle = if ($cachedGradle) { $cachedGradle.FullName } else { Join-Path $projectDir 'gradlew.bat' }
 if (-not (Test-Path -LiteralPath $gradle)) { throw 'Gradle 9.6.1 cache or Gradle wrapper is required.' }
-$gradleArgs = @('-p', $projectDir, 'assembleDebug', 'lintDebug', '--console=plain')
+$gradleArgs = @('-p', $projectDir, 'testDebugUnitTest', 'assembleDebug', 'lintDebug', '--console=plain')
 if ($Offline) { $gradleArgs += '--offline' }
 & $gradle @gradleArgs
-if ($LASTEXITCODE -ne 0) { throw 'Android build or lint failed.' }
+if ($LASTEXITCODE -ne 0) { throw 'Android tests, build or lint failed.' }
 Write-Output "APK: $(Join-Path $projectDir 'app\build\outputs\apk\debug\app-debug.apk')"

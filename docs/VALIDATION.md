@@ -2,6 +2,11 @@
 
 日期：2026-10-31。环境：Windows x64，Rust/Cargo 1.97.1。
 
+Android 0.1.2 增加 10 项 Kotlin 播放缓冲策略测试；实际 JNI 检查新增五档采样率
+的 10 ms 音频块。原有 41 项工作区测试再次通过。本轮未修改 Rust DSP/网络策略，
+桌面端保留 0.1.1。用户已确认 0.1.1 真机连续播放稳定；0.1.2 延迟优化尚未真机试听。
+详见 [本轮记录](PLAYBACK-LATENCY.md) 和 [安装包检查](../android/BUILD-STATUS.md)。
+
 ## 自动检查
 
 - `cargo fmt --all -- --check`：通过。

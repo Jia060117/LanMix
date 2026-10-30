@@ -10,6 +10,8 @@ import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,7 +24,8 @@ class PlaybackEngine(
     private val onReady: () -> Unit,
     private val onFocusLost: () -> Unit
 ) {
-    data class Config(val port: Int, val bufferMs: Int, val device: AudioDeviceInfo?, val rate: Int)
+    data class Config(val port: Int, val bufferMs: Int, val device: AudioDeviceInfo?, val rate: Int,
+                      val mode: PlaybackMode = PlaybackMode.BALANCED)
     private class Session(val track: AudioTrack, val live: AtomicBoolean, val worker: Thread)
     private val handler = Handler(Looper.getMainLooper())
     private val controller = Executors.newSingleThreadExecutor { Thread(it, "LanMix-lifecycle") }
@@ -44,7 +47,7 @@ class PlaybackEngine(
                 if (generation.get() != token || closed) return@execute
                 open(next, token, autoRateHint)
             } catch (e: Exception) {
-                post(token) { onStatus("Cannot start: ${e.message}", false) }
+                post(token) { onStatus("无法启动：${e.message}", false) }
             }
         }
     }
@@ -56,9 +59,9 @@ class PlaybackEngine(
         controller.execute {
             try {
                 stopInternal()
-                post(token) { onStatus("Stopped · receiver socket closed", false); onActual("No active AudioTrack") }
+                post(token) { onStatus("已停止接收", false); onActual("等待启动音频输出") }
             } catch (e: Exception) {
-                post(token) { onStatus("Stop failed: ${e.message}", false) }
+                post(token) { onStatus("停止失败：${e.message}", false) }
             }
         }
     }
@@ -78,7 +81,7 @@ class PlaybackEngine(
             .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build()
         val minimum = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
         check(minimum > 0) { "PCM float stereo unavailable at $rate Hz (code $minimum)" }
-        // The network jitter buffer is independent of this small playback buffer.
+        // Retain platform capacity for recovery; the writer limits effective size.
         val track = AudioTrack.Builder().setAudioAttributes(attributes).setAudioFormat(format)
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(minimum * 2, 8192)).build()
         var nativeStarted = false
@@ -94,6 +97,7 @@ class PlaybackEngine(
             NativeBridge.nativeStart(next.port, next.bufferMs, track.sampleRate)
             nativeStarted = true
             val live = AtomicBoolean(true)
+            val retuneRoute = AtomicBoolean(false)
             var observedId: Int? = null // main thread routing callback only
             val routingListener = AudioRouting.OnRoutingChangedListener {
                 if (generation.get() != token || !live.get() || closed) return@OnRoutingChangedListener
@@ -101,7 +105,7 @@ class PlaybackEngine(
                 val id = actual?.id
                 val changed = observedId != null && id != observedId
                 observedId = id
-                runCatching { actualText(track) }.getOrNull()?.let(onActual)
+                retuneRoute.set(true) // only the writer changes effective buffer size
                 val autoRate = OutputDevices.autoRate(manager, actual)
                 if (changed || (next.rate == 0 && actual != null && track.sampleRate != autoRate)) {
                     // For a system-selected output, carry the new device's native rate into
@@ -114,21 +118,37 @@ class PlaybackEngine(
                 var failure: String? = null
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
-                    val samples = FloatArray(1024 * 2) // allocated once, reused for every fill
+                    val rate = track.sampleRate
+                    val samples = FloatArray(PlaybackBufferTuner.blockFrames(rate) * 2)
+                    val counter = PlaybackQueueCounter()
+                    val tuner = PlaybackBufferTuner(rate, next.mode, object : PlaybackBuffer {
+                        override val capacityFrames get() = track.bufferCapacityInFrames
+                        override val sizeFrames get() = track.bufferSizeInFrames
+                        override fun resize(frames: Int) = track.setBufferSizeInFrames(frames)
+                    })
                     track.play()
-                    post(token) { onReady(); onStatus("Receiving · UDP ${next.port} · ${next.bufferMs} ms initial buffer · adaptive", true) }
-                    var iteration = 0
+                    post(token) { onReady(); onStatus("接收中 · UDP ${next.port} · 网络初始缓冲 ${next.bufferMs} ms · 自适应", true) }
+                    var nextReport = SystemClock.elapsedRealtime()
                     while (live.get()) {
+                        if (retuneRoute.getAndSet(false)) tuner.refreshRoute()
                         NativeBridge.nativeFill(samples)
                         var offset = 0
                         while (offset < samples.size && live.get()) {
                             val written = track.write(samples, offset, samples.size - offset, AudioTrack.WRITE_BLOCKING)
                             check(written >= 0 || !live.get()) { "AudioTrack write failed ($written)" }
-                            if (written > 0) offset += written
+                            if (written > 0) {
+                                offset += written
+                                counter.acceptedSamples(written.toLong())
+                            }
                             else if (live.get()) Thread.sleep(2)
                         }
-                        if (++iteration % 24 == 0) post(token) {
-                            if (live.get()) runCatching { actualText(track) }.getOrNull()?.let(onActual)
+                        val now = SystemClock.elapsedRealtime()
+                        if (now >= nextReport && live.get()) {
+                            tuner.observeUnderruns(track.underrunCount)
+                            val queued = counter.queuedFrames(track.playbackHeadPosition)
+                            val report = actualText(track, tuner, queued)
+                            post(token) { if (live.get()) onActual(report) }
+                            nextReport = now + 500
                         }
                     }
                 } catch (e: Exception) {
@@ -140,7 +160,7 @@ class PlaybackEngine(
                     runCatching { NativeBridge.nativeStop() }
                     track.release()
                     manager.abandonAudioFocusRequest(focus)
-                    failure?.let { message -> post(token) { onStatus("Playback stopped: $message", false) } }
+                    failure?.let { message -> post(token) { onStatus("播放已停止：$message", false) } }
                 }
             }, "LanMix-PCM-float")
             session = Session(track, live, worker)
@@ -172,10 +192,14 @@ class PlaybackEngine(
         handler.post { if (generation.get() == token && !closed) action() }
     }
 
-    private fun actualText(track: AudioTrack): String = buildString {
-        appendLine("Actual route: ${track.routedDevice?.let(OutputDevices::label) ?: "Pending Android routing"}")
-        appendLine("AudioTrack: ${track.sampleRate} Hz · ${track.channelCount} channels · ${OutputDevices.encoding(track.audioFormat)}")
-        appendLine("Playback buffer: ${track.bufferSizeInFrames} frames · underruns ${track.underrunCount}")
-        append("Track format is observed here. Android may resample downstream; DAC format and end-to-end latency are not reported.")
+    private fun actualText(track: AudioTrack, tuner: PlaybackBufferTuner, queued: Long?): String = buildString {
+        fun ms(frames: Long) = String.format(Locale.US, "%.1f", frames * 1000.0 / track.sampleRate)
+        appendLine("实际输出：${track.routedDevice?.let(OutputDevices::label) ?: "等待系统路由"}")
+        appendLine("应用输出：${track.sampleRate} Hz · ${track.channelCount} 声道 · ${OutputDevices.encoding(track.audioFormat)}")
+        appendLine("播放缓冲上限：${ms(track.bufferSizeInFrames.toLong())} ms · ${track.bufferSizeInFrames} 帧")
+        appendLine("当前排队估算：${queued?.let { "${ms(it)} ms" } ?: "暂不可用"} · 系统容量 ${ms(track.bufferCapacityInFrames.toLong())} ms")
+        appendLine("输出缺粮 ${track.underrunCount} 次 · 自动扩容 ${tuner.increases} 次${if (tuner.fallback) " · 设备拒绝缓冲调节" else ""}")
+        appendLine("模式：${tuner.mode.label}")
+        append("排队估算仅覆盖应用 AudioTrack；不代表端到端延迟或耳机 DAC 格式。")
     }
 }

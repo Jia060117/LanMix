@@ -10,7 +10,7 @@ Studio's bundled JDK are used. The installed NDK is 30.0.14904198 (r30-beta1).
 
 From PowerShell, run `./android/build.ps1` from the repository root. It builds
 `lanmix-android` for arm64-v8a and armeabi-v7a with the installed API-26 NDK
-linkers, stages the libraries, and runs `assembleDebug lintDebug`. No root
+linkers, stages the libraries, and runs `testDebugUnitTest assembleDebug lintDebug`. No root
 manifest changes or Gradle installation are required. `-Offline` uses cached
 dependencies; `-SkipNative` reuses previously staged libraries. Gradle's preBuild
 fails if either native library is absent, preventing UI-only APKs.
@@ -22,7 +22,7 @@ must already be installed. The script does not install or launch devices.
 
 ## Receive audio
 
-Open the Activity, allow local network access on Android 17+, and press Start.
+Open the Activity, allow local network access on Android 17+, and press 开始接收.
 Send LanMix unicast UDP to the displayed IPv4 address, default port **46210** and
 initial network jitter buffer **150 ms** for new installs (adjustable 20–200 ms).
 Existing saved values are retained; after upgrading, start with 150 ms for
@@ -62,9 +62,33 @@ The v0.1 backend is a dedicated Java/Kotlin **blocking AudioTrack writer**, not 
 Oboe/AAudio real-time callback. It requests THREAD_PRIORITY_AUDIO, MODE_STREAM,
 stereo ENCODING_PCM_FLOAT. It does not require PERFORMANCE_MODE_LOW_LATENCY.
 The playback buffer is separate from the network jitter buffer. Every fill uses
-one preallocated Java float[2048], handles partial writes, and renders 1024
-frames. PCM uses SetFloatArrayRegion's deliberate array copy. There is no
+one preallocated Java float array, handles partial writes, and renders approximately
+10 ms (480 stereo frames at 48 kHz, 441 at 44.1 kHz). PCM uses
+SetFloatArrayRegion's deliberate array copy. There is no
 GetPrimitiveArrayCritical pinning.
+
+### Playback scheduling in Android 0.1.2
+
+Playback modes request an effective AudioTrack buffer of 60 ms (均衡, default),
+100 ms (稳定优先), or 30 ms (响应优先). 兼容 leaves the platform buffer unchanged.
+The original allocated capacity is retained for recovery. Android may clamp the
+request; the UI displays the actual effective size separately from capacity.
+These settings change neither source buffering nor PCM/EQ processing.
+
+The writer observes cumulative output underruns about every 500 ms. A new
+underrun grows the effective buffer by 50%, at least 10 ms; multiple new events
+double it, capped at platform capacity. It never shrinks an adapted target
+within a session. Routing notifications reapply the learned limit on the writer;
+an actual output-device/rate change rebuilds the stream as before. Failed resizing
+attempts to restore full capacity and disables further tuning until restart.
+
+The displayed queue estimate uses accepted stereo samples minus Android's
+unsigned playback-head counter, accounting for partial writes and wraparound.
+Inconsistent counters display unavailable. This is diagnostic only and never
+paces rendering; it does not measure downstream Bluetooth or end-to-end delay.
+Mode and requested sample rate are saved. Changing mode restarts reception.
+The UI has Chinese controls, separately identified network/output buffer health,
+and a user-operated copy-diagnostics button. See [latency validation](../docs/PLAYBACK-LATENCY.md).
 
 `NativeBridge` (`io.lanmix.receiver`) loads `liblanmix_android.so` and exposes:
 

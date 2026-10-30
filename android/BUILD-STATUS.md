@@ -1,5 +1,39 @@
 # Verified Android build
 
+## 0.1.2 playback scheduling update · 2026-10-31
+
+The user confirmed 0.1.1 playback became stable without the reported crackles or
+dropouts, while perceived latency remained high. Android 0.1.2 optimizes output
+queueing and UI diagnostics; desktop and native Rust package versions remain
+0.1.1, with no DSP or network-policy change in this iteration.
+
+- APK: `dist/android/LanMix-0.1.2-debug.apk` from the repository root.
+- Package: `io.lanmix.receiver`, **0.1.2 / version code 3**.
+- Size: **1,919,979 bytes**.
+- SHA-256: `3CF9F53379172C393105101CA4AE3CD649666B69CEE4D7440C74F7857D8A8D78`.
+- Both native ARM release libraries rebuilt using `./android/build.ps1 -Offline`.
+  Final Kotlin/UI changes checked with `-SkipNative -Offline`.
+- **10 Kotlin/JUnit tests passed**, zero failures/errors/skips; `assembleDebug`
+  and `lintDebug` passed. Lint XML: **0 errors, 25 warnings**, no baseline.
+- APK v2 signature and `zipalign -c -P 16 4` passed. `aapt2 dump badging` confirmed
+  the version, API 26 minimum and API 37 target. The signer certificate matches
+  the 0.1.1 debug APK, allowing an in-place update.
+- Actual JVM `-Xcheck:jni` smoke passed with real UDP, audible float output,
+  concurrent controls/diagnostics and same-port lifecycle checks. New coverage
+  exercises 10 ms fills at 8/44.1/48/96/192 kHz.
+- `cargo test --locked --workspace`: **41 tests passed** again.
+
+The 60/100/30 ms modes request smaller effective AudioTrack buffers while
+retaining system capacity for output-underrun recovery. Compatibility mode leaves
+the platform limit untouched. Device clamping, route changes, resize failures,
+and queue-counter wraparound are covered in host tests. These tests do not
+instantiate physical Android AudioTrack hardware. No phone was operated by the
+agent, and no real-device latency reduction or new-version continuity was
+measured. See [implementation and validation](../docs/PLAYBACK-LATENCY.md).
+
+The following sections preserve the checks and limitations recorded at those
+earlier builds; the user's later stability confirmation is recorded above.
+
 ## 0.1.1 buffer continuity update · 2026-10-31
 
 `./android/build.ps1 -Offline` rebuilt both ARM libraries, `assembleDebug`, and

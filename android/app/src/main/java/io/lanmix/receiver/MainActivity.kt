@@ -2,6 +2,8 @@ package io.lanmix.receiver
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -51,6 +53,7 @@ class MainActivity : Activity() {
     private var selectedId: Int? = null
     private var rateOptions = listOf(0)
     private var selectedRate = 0
+    private var playbackMode = PlaybackMode.BALANCED
     private var updating = false
     private var requested = false
     private var running = false
@@ -66,7 +69,7 @@ class MainActivity : Activity() {
             if (!visible) return
             if (NativeBridge.loadError == null && running) {
                 runCatching { updateTracks(JSONObject(NativeBridge.nativeTracks())) }
-                    .onFailure { networkStats.text = "Diagnostics unavailable: ${it.message}" }
+                    .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
             }
             handler.postDelayed(this, 750)
         }
@@ -75,13 +78,15 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         manager = getSystemService(AudioManager::class.java)
+        playbackMode = PlaybackMode.fromKey(preferences.getString("playback_mode", null))
+        selectedRate = preferences.getInt("output_rate", 0)
         mix = MixState(preferences)
         engine = PlaybackEngine(manager,
             onStatus = { text, active ->
                 running = active
                 status.text = text
                 if (!active) { requested = false; window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-                startButton.text = if (requested) "Stop receiver" else "Start receiver"
+                startButton.text = if (requested) "停止接收" else "开始接收"
             },
             onActual = { actual.text = it },
             onReady = {
@@ -91,13 +96,13 @@ class MainActivity : Activity() {
                 emptySources.visibility = View.VISIBLE
                 applyControl { mix.applyMaster() }
             },
-            onFocusLost = { stopReceiver("Audio focus changed · tap Start to resume") }
+            onFocusLost = { stopReceiver("音频焦点已改变 · 点击开始恢复") }
         )
         createUi()
         manager.registerAudioDeviceCallback(deviceCallback, handler)
         updateDevices()
         NativeBridge.loadError?.let {
-            status.text = "Native library unavailable. Build and package the Rust library for this device ABI.\n$it"
+            status.text = "无法加载音频核心，请确认安装包支持当前设备架构。\n$it"
             startButton.isEnabled = false
         }
     }
@@ -111,7 +116,7 @@ class MainActivity : Activity() {
     override fun onStop() {
         visible = false
         handler.removeCallbacks(poll)
-        stopReceiver("Stopped · Activity is in the background")
+        stopReceiver("已停止 · 应用已进入后台")
         mix.save()
         super.onStop()
     }
@@ -140,26 +145,26 @@ class MainActivity : Activity() {
         }
         setContentView(scroll)
         root.addView(text("LANMIX / RECEIVER", 12, accent).apply { letterSpacing = .12f })
-        root.addView(text("One output.\nEvery source.", 30, ink, true))
-        root.addView(text("Native stereo receiver · up to 16 independent sources", 14, subtle))
+        root.addView(text("多个设备\n一个声音出口", 30, ink, true))
+        root.addView(text("最多 16 路独立音源 · 音量与均衡器单独控制", 14, subtle))
 
-        val connection = card(root, "Receiver")
-        status = text("Ready · start to open the UDP receiver", 14, accent)
+        val connection = card(root, "接收与连接")
+        status = text("准备就绪 · 点击开始接收", 14, accent)
         connection.addView(status)
-        bufferHealth = text("Source buffer diagnostics appear here while receiving", 12, subtle)
+        bufferHealth = text("接收后显示各音源的网络缓冲状态", 12, subtle)
         connection.addView(bufferHealth)
-        connection.addView(text("Send unicast UDP to this device:\n${localAddresses()}", 13, subtle).apply { setTextIsSelectable(true) })
+        connection.addView(text("将电脑音频发送到以下地址：\n${localAddresses()}", 13, subtle).apply { setTextIsSelectable(true) })
         val inputs = LinearLayout(this)
-        port = numberInput("UDP port", preferences.getInt("port", 46210).toString())
-        buffer = numberInput("Initial jitter buffer / ms", preferences.getInt("buffer", 150).toString())
-        inputs.addView(field("UDP port", port), LinearLayout.LayoutParams(0, -2, 1f))
-        inputs.addView(field("Buffer / ms · 20–200", buffer), LinearLayout.LayoutParams(0, -2, 1f))
+        port = numberInput("UDP 端口", preferences.getInt("port", 46210).toString())
+        buffer = numberInput("网络初始缓冲 / ms", preferences.getInt("buffer", 150).toString())
+        inputs.addView(field("UDP 端口", port), LinearLayout.LayoutParams(0, -2, 1f))
+        inputs.addView(field("网络缓冲 / ms · 20–200", buffer), LinearLayout.LayoutParams(0, -2, 1f))
         connection.addView(inputs)
-        connection.addView(text("Initial target; a starving source can adapt up to 400 ms to keep playback continuous. Try 150 ms for Wi-Fi.", 12, subtle))
+        connection.addView(text("Wi-Fi 建议先保留 150 ms。音源缺粮时自动增加，最高 400 ms，优先保持连续播放。", 12, subtle))
         startButton = Button(this).apply {
-            text = "Start receiver"; isAllCaps = false
+            text = "开始接收"; isAllCaps = false
             setOnClickListener {
-                if (requested) stopReceiver("Stopping…") else {
+                if (requested) stopReceiver("正在停止…") else {
                     if (Build.VERSION.SDK_INT >= 37 && checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED) {
                         requestPermissions(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK), 37)
                     } else startReceiver()
@@ -167,12 +172,12 @@ class MainActivity : Activity() {
             }
         }
         connection.addView(startButton)
-        connection.addView(text("Activity only: playback stops when this screen enters the background. Keep the screen open while receiving.", 12, subtle))
+        connection.addView(text("接收期间请保持此页面在前台；进入后台或锁屏后停止播放。", 12, subtle))
 
-        val output = card(root, "Output device")
+        val output = card(root, "播放与输出")
         deviceSpinner = Spinner(this)
         output.addView(deviceSpinner)
-        output.addView(text("Requested AudioTrack rate", 12, subtle))
+        output.addView(text("应用输出采样率", 12, subtle))
         rateSpinner = Spinner(this)
         output.addView(rateSpinner)
         deviceSpinner.onItemSelectedListener = selection { position ->
@@ -187,39 +192,66 @@ class MainActivity : Activity() {
             val next = rateOptions.getOrElse(position) { 0 }
             if (!updating && next != selectedRate) {
                 selectedRate = next
+                preferences.edit().putInt("output_rate", next).apply()
                 if (requested) startReceiver()
             }
         }
-        actual = text("No active AudioTrack", 13, ink)
+        output.addView(text("播放模式", 12, subtle))
+        val modes = PlaybackMode.entries
+        val modeSpinner = Spinner(this).apply {
+            adapter = adapter(modes.map { it.label })
+            setSelection(modes.indexOf(playbackMode))
+            onItemSelectedListener = selection { position ->
+                val next = modes[position]
+                if (next != playbackMode) {
+                    playbackMode = next
+                    preferences.edit().putString("playback_mode", next.key).apply()
+                    if (requested) startReceiver()
+                }
+            }
+        }
+        output.addView(modeSpinner)
+        output.addView(text("先试均衡模式；稳定后可试响应优先。模式只调整播放排队，实际下限由设备决定；缺粮时自动扩容。切换会重启接收。", 12, subtle))
+        actual = text("等待启动音频输出", 13, ink).apply { setTextIsSelectable(true) }
         output.addView(actual)
 
-        val reports = card(root, "Reported capabilities")
-        reports.addView(text("Device declarations describe possible formats. They do not establish the current stream or physical DAC format. Empty lists mean unspecified.", 12, subtle))
+        val reports = card(root, "设备报告的音频能力")
+        reports.addView(text("以下是系统报告的可用格式，不等同于当前播放格式或 DAC 的实际工作参数；空列表表示未报告。", 12, subtle))
         capabilities = text("", 12, subtle).apply { setTextIsSelectable(true) }
-        val reportToggle = Button(this).apply { text = "Show all output reports"; isAllCaps = false }
+        val reportToggle = Button(this).apply { text = "展开设备能力"; isAllCaps = false }
         capabilities.visibility = View.GONE
         reportToggle.setOnClickListener {
             capabilities.visibility = if (capabilities.visibility == View.GONE) View.VISIBLE else View.GONE
-            reportToggle.text = if (capabilities.visibility == View.VISIBLE) "Hide output reports" else "Show all output reports"
+            reportToggle.text = if (capabilities.visibility == View.VISIBLE) "收起设备能力" else "展开设备能力"
         }
         reports.addView(reportToggle)
         reports.addView(capabilities)
 
-        val master = card(root, "Master mix")
-        master.addView(text("Reserve headroom when combining sources. Master starts at −6 dB; lower preamp before boosting EQ.", 12, subtle))
-        masterMeter = text("Peak — · clipped frames —", 12, accent)
+        val master = card(root, "总混音")
+        master.addView(text("默认总音量 −6 dB，为多个音源叠加预留余量；提升 EQ 时建议降低预放大。", 12, subtle))
+        masterMeter = text("峰值 — · 触发保护帧数 —", 12, accent)
         master.addView(masterMeter)
         addControls(master, mix.master, null)
 
-        val sourceCard = card(root, "Sources")
-        sourceCard.addView(text("Each source has its own gain, mute, solo, preamp and ten-band EQ. Settings follow its IP address and stream ID.", 12, subtle))
-        emptySources = text("Waiting for source packets…", 14, subtle)
+        val sourceCard = card(root, "独立音源")
+        sourceCard.addView(text("独立调节音量、静音、独听与 10 段 EQ；按音源 IP 和流标识保存设置。", 12, subtle))
+        emptySources = text("等待音源连接…", 14, subtle)
         sourceCard.addView(emptySources)
         sources = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         sourceCard.addView(sources)
-        val diagnostics = card(root, "Network / diagnostics")
-        networkStats = text("No packets received in this session", 12, subtle).apply { setTextIsSelectable(true) }
+        val diagnostics = card(root, "网络与诊断")
+        networkStats = text("本次尚未接收数据", 12, subtle).apply { setTextIsSelectable(true) }
         diagnostics.addView(networkStats)
+        diagnostics.addView(Button(this).apply {
+            text = "复制诊断信息"; isAllCaps = false
+            setOnClickListener {
+                val details = listOf("LanMix ${packageManager.getPackageInfo(packageName, 0).versionName}",
+                    status.text, actual.text, bufferHealth.text, networkStats.text, masterMeter.text,
+                    capabilities.text).joinToString("\n\n")
+                getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", details))
+                Toast.makeText(this@MainActivity, "诊断信息已复制", Toast.LENGTH_SHORT).show()
+            }
+        })
     }
 
     private fun startReceiver() {
@@ -227,22 +259,25 @@ class MainActivity : Activity() {
         val portValue = port.text.toString().toIntOrNull()
         val bufferValue = buffer.text.toString().toIntOrNull()
         if (portValue == null || portValue !in 1..65535 || bufferValue == null || bufferValue !in 20..200) {
-            status.text = "Use a port from 1–65535 and a jitter buffer from 20–200 ms"
+            status.text = "端口范围 1–65535，网络初始缓冲范围 20–200 ms"
             return
         }
         preferences.edit().putInt("port", portValue).putInt("buffer", bufferValue).apply()
         requested = true
         running = false
-        startButton.text = "Stop receiver"
-        status.text = "Starting audio and UDP…"
+        startButton.text = "停止接收"
+        status.text = "正在启动音频与网络接收…"
+        bufferHealth.text = "等待音源音频…"
+        actual.text = "正在打开音频输出…"
+        networkStats.text = "正在开启新的接收会话"
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        engine.start(PlaybackEngine.Config(portValue, bufferValue, devices.find { it.id == selectedId }, selectedRate))
+        engine.start(PlaybackEngine.Config(portValue, bufferValue, devices.find { it.id == selectedId }, selectedRate, playbackMode))
     }
 
     private fun stopReceiver(message: String) {
         requested = false
         running = false
-        if (::startButton.isInitialized) startButton.text = "Start receiver"
+        if (::startButton.isInitialized) startButton.text = "开始接收"
         if (::status.isInitialized) status.text = message
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         engine.stop()
@@ -252,7 +287,7 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 37) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && visible) startReceiver()
-            else status.text = "Local network permission is needed to receive LAN audio"
+            else status.text = "请允许本地网络访问，以接收局域网音频"
         }
     }
 
@@ -263,7 +298,7 @@ class MainActivity : Activity() {
         val lostSelection = selectedId != null && devices.none { it.id == selectedId }
         if (lostSelection) selectedId = null
         updating = true
-        deviceSpinner.adapter = adapter(listOf("System default output") + devices.map(OutputDevices::label))
+        deviceSpinner.adapter = adapter(listOf("跟随系统默认输出") + devices.map(OutputDevices::label))
         deviceSpinner.setSelection(devices.indexOfFirst { it.id == selectedId } + 1)
         updateRates()
         updateCapabilities()
@@ -278,13 +313,13 @@ class MainActivity : Activity() {
         rateOptions = listOf(0) + (reported + listOf(44100, 48000, 96000, 192000))
             .filter { it in 8000..192000 }.distinct().sorted()
         if (selectedRate !in rateOptions) selectedRate = 0
-        rateSpinner.adapter = adapter(rateOptions.map { if (it == 0) "Auto · Android/device native rate" else "$it Hz · requested" })
+        rateSpinner.adapter = adapter(rateOptions.map { if (it == 0) "自动 · 系统或设备原生采样率" else "$it Hz · 请求值" })
         rateSpinner.setSelection(rateOptions.indexOf(selectedRate))
         updating = wasUpdating
     }
 
     private fun updateCapabilities() {
-        capabilities.text = devices.joinToString("\n\n", transform = OutputDevices::report).ifBlank { "Android reports no output devices" }
+        capabilities.text = devices.joinToString("\n\n", transform = OutputDevices::report).ifBlank { "系统未报告输出设备" }
     }
 
     private fun updateTracks(json: JSONObject) {
@@ -302,32 +337,32 @@ class MainActivity : Activity() {
                 applyControl { mix.applyTrack(slot) }
             }
             val views = trackViews.getOrPut(slot) {
-                val card = card(sources, "Source ${slot + 1}")
+                val card = card(sources, "音源 ${slot + 1}")
                 val name = text("", 14, ink, true)
                 val details = text("", 12, subtle)
                 card.addView(name); card.addView(details)
                 addControls(card, mix.tracks[slot], slot)
                 name to details
             }
-            views.first.text = "${slot + 1} · ${item.optString("source")} / stream ${item.optLong("stream_id")} · ${if (item.optBoolean("online")) "online" else "offline"}"
+            views.first.text = "${slot + 1} · ${item.optString("source")} / 流 ${item.optLong("stream_id")} · ${if (item.optBoolean("online")) "在线" else "离线"}"
             val meter = json.optJSONArray("meters")?.optJSONObject(slot)
-            views.second.text = "Source ${item.optInt("sample_rate")} Hz · stereo PCM float\n" +
-                "Packets ${item.optLong("packets")} · lost frames ${item.optLong("lost_frames")} · late ${item.optLong("late_packets")}\n" +
-                "Queue overflow ${item.optLong("queue_overflows")} · underruns ${meter?.optLong("underruns") ?: 0} · peak ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
-                "Buffer ${String.format(Locale.US, "%.1f", meter?.optDouble("buffered_ms") ?: 0.0)} / target ${meter?.optInt("target_buffer_ms") ?: 0} ms · ${if (meter?.optBoolean("primed") == true) "playing" else "buffering"}"
+            views.second.text = "来源 ${item.optInt("sample_rate")} Hz · 双声道 PCM float\n" +
+                "数据包 ${item.optLong("packets")} · 丢失帧 ${item.optLong("lost_frames")} · 迟到包 ${item.optLong("late_packets")}\n" +
+                "队列溢出 ${item.optLong("queue_overflows")} · 音源缺粮 ${meter?.optLong("underruns") ?: 0} · 峰值 ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
+                "网络缓冲 ${String.format(Locale.US, "%.1f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
-        trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "No source in this receiver slot"; views.second.text = "Waiting for this session" }
+        trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "此通道暂无音源"; views.second.text = "等待音源连接" }
         emptySources.visibility = if (seen.isEmpty()) View.VISIBLE else View.GONE
         val stats = json.optJSONObject("stats") ?: JSONObject()
         val meters = json.optJSONArray("meters")
-        bufferHealth.text = if (seen.isEmpty()) "Waiting for source audio…" else seen.sorted().joinToString("\n") { slot ->
+        bufferHealth.text = if (seen.isEmpty()) "等待音源音频…" else seen.sorted().joinToString("\n") { slot ->
             val meter = meters?.optJSONObject(slot)
-            "Source ${slot + 1}: ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / ${meter?.optInt("target_buffer_ms") ?: 0} ms · underruns ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "playing" else "buffering"}"
+            "音源 ${slot + 1}：网络 ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · 缺粮 ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
-        networkStats.text = "Received ${stats.optLong("received_packets")} packets / ${stats.optLong("received_bytes")} bytes\n" +
-            "Invalid ${stats.optLong("invalid_packets")} · rejected sources ${stats.optLong("rejected_sources")}"
+        networkStats.text = "已接收 ${stats.optLong("received_packets")} 包 / ${stats.optLong("received_bytes")} 字节\n" +
+            "无效包 ${stats.optLong("invalid_packets")} · 拒绝音源 ${stats.optLong("rejected_sources")}"
         val master = json.optJSONObject("master")
-        masterMeter.text = "Peak ${peak(master?.optDouble("peak") ?: 0.0)} · clipped frames ${master?.optLong("clipped_frames") ?: 0}"
+        masterMeter.text = "峰值 ${peak(master?.optDouble("peak") ?: 0.0)} · 触发保护帧数 ${master?.optLong("clipped_frames") ?: 0}"
     }
 
     private fun addControls(parent: LinearLayout, control: MixControl, slot: Int?) {
@@ -335,20 +370,20 @@ class MainActivity : Activity() {
             mix.save()
             if (running) applyControl { if (slot == null) mix.applyMaster() else mix.applyTrack(slot) }
         }
-        slider(parent, "Gain", control.gainDb, -60f, 12f) { control.gainDb = it; changed() }
+        slider(parent, "音量", control.gainDb, -60f, 12f) { control.gainDb = it; changed() }
         if (slot != null) {
             val toggles = LinearLayout(this)
-            toggles.addView(check("Mute", control.mute) { control.mute = it; changed() })
-            toggles.addView(check("Solo", control.solo) { control.solo = it; changed() })
+            toggles.addView(check("静音", control.mute) { control.mute = it; changed() })
+            toggles.addView(check("独听", control.solo) { control.solo = it; changed() })
             parent.addView(toggles)
         }
         val eq = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        val expand = Button(this).apply { text = "Ten-band EQ / preamp"; isAllCaps = false }
+        val expand = Button(this).apply { text = "10 段均衡器 / 预放大"; isAllCaps = false }
         expand.setOnClickListener { eq.visibility = if (eq.visibility == View.GONE) View.VISIBLE else View.GONE }
         parent.addView(expand)
         parent.addView(eq)
-        eq.addView(check("Enable EQ", control.eqEnabled) { control.eqEnabled = it; changed() })
-        slider(eq, "Preamp", control.preampDb, -24f, 12f) { control.preampDb = it; changed() }
+        eq.addView(check("启用均衡器", control.eqEnabled) { control.eqEnabled = it; changed() })
+        slider(eq, "预放大", control.preampDb, -24f, 12f) { control.preampDb = it; changed() }
         val bands = listOf("31.25 Hz", "62.5 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz")
         bands.forEachIndexed { index, label ->
             slider(eq, label, control.bands[index], -12f, 12f) { control.bands[index] = it; changed() }
@@ -356,7 +391,7 @@ class MainActivity : Activity() {
     }
 
     private fun applyControl(action: () -> Unit) {
-        runCatching(action).onFailure { status.text = "Control update failed: ${it.message}" }
+        runCatching(action).onFailure { status.text = "调节失败：${it.message}" }
     }
 
     private fun slider(parent: LinearLayout, name: String, value: Float, minimum: Float, maximum: Float, changed: (Float) -> Unit) {
@@ -365,7 +400,7 @@ class MainActivity : Activity() {
         parent.addView(SeekBar(this).apply {
             max = ((maximum - minimum) * 2).toInt()
             progress = ((value - minimum) * 2).toInt()
-            contentDescription = "$name in decibels"
+            contentDescription = "$name，单位分贝"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                     if (!fromUser) return
@@ -415,8 +450,8 @@ class MainActivity : Activity() {
     private fun localAddresses(): String = runCatching {
         NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
             .flatMap { it.inetAddresses.toList() }.filter { it is java.net.Inet4Address && !it.isLoopbackAddress }
-            .joinToString("\n") { it.hostAddress ?: "" }.ifBlank { "Connect to a local network" }
-    }.getOrDefault("Local address unavailable")
+            .joinToString("\n") { it.hostAddress ?: "" }.ifBlank { "请先连接局域网" }
+    }.getOrDefault("暂时无法获取本地地址")
     private fun peak(value: Double) = if (value <= 0) "−∞ dBFS" else String.format(Locale.US, "%.1f dBFS", 20 * kotlin.math.log10(value))
     private fun db(value: Float) = String.format(Locale.US, "%+.1f dB", value)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
