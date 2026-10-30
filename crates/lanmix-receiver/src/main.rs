@@ -91,7 +91,7 @@ impl Default for Settings {
         Self {
             output_name: None,
             sample_rate: 0,
-            buffer_ms: 60,
+            buffer_ms: 150,
             master: MixSettings {
                 gain_db: -6.0,
                 ..Default::default()
@@ -375,7 +375,10 @@ impl eframe::App for App {
                             );
                         }
                     });
-                ui.add(egui::Slider::new(&mut self.settings.buffer_ms, 20..=200).text("buffer ms"));
+                ui.add(
+                    egui::Slider::new(&mut self.settings.buffer_ms, 20..=200)
+                        .text("initial buffer ms"),
+                );
                 ui.small("Format / buffer changes apply after restart.");
                 ui.separator();
                 ui.label(
@@ -492,6 +495,9 @@ impl eframe::App for App {
                             meter(ui, control.peak());
                             equalizer(ui, "eq", mix, self.engine.as_ref().unwrap().rate);
                             ui.small(format!("Packets {} · missing {} frames · late/duplicate {} · overflow {} · underruns {}", track.packets, track.lost_frames, track.late_packets, track.queue_overflows, control.underruns()));
+                            ui.small(format!("Buffer {:.1} / target {} ms · {} · clock {:+.0} ppm",
+                                control.buffered_frames() as f64 * 1000.0 / track.sample_rate as f64,
+                                control.target_buffer_ms(), if control.primed() { "playing" } else { "buffering" }, control.drift_ppm()));
                         });
                     });
                     mix.apply_track(&control);
@@ -621,7 +627,11 @@ fn headless(args: Args) -> Result<()> {
             std::thread::sleep(wait);
         }
     }
-    let report = serde_json::json!({ "network":receiver.stats(), "tracks":receiver.snapshot(), "output":{ "sample_rate":48000,"peak":peak,"rms":(energy / count.max(1) as f64).sqrt(),"non_silent_samples":non_silent,"rendered_samples":count,"clipped_frames":receiver.master.clipped_frames() } });
+    let meters: Vec<_> = receiver.controls.iter().enumerate().map(|(slot, control)| {
+        serde_json::json!({"slot":slot,"underruns":control.underruns(),"buffered_frames":control.buffered_frames(),
+            "target_buffer_ms":control.target_buffer_ms(),"primed":control.primed(),"drift_ppm":control.drift_ppm()})
+    }).collect();
+    let report = serde_json::json!({ "network":receiver.stats(), "tracks":receiver.snapshot(), "meters":meters, "output":{ "sample_rate":48000,"peak":peak,"rms":(energy / count.max(1) as f64).sqrt(),"non_silent_samples":non_silent,"rendered_samples":count,"clipped_frames":receiver.master.clipped_frames() } });
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(path) = args.report {
         std::fs::write(path, &json)?;

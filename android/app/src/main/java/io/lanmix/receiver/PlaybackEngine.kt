@@ -116,7 +116,7 @@ class PlaybackEngine(
                     Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                     val samples = FloatArray(1024 * 2) // allocated once, reused for every fill
                     track.play()
-                    post(token) { onReady(); onStatus("Receiving · UDP ${next.port} · ${next.bufferMs} ms jitter buffer", true) }
+                    post(token) { onReady(); onStatus("Receiving · UDP ${next.port} · ${next.bufferMs} ms initial buffer · adaptive", true) }
                     var iteration = 0
                     while (live.get()) {
                         NativeBridge.nativeFill(samples)

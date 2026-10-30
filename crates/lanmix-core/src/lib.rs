@@ -3,7 +3,8 @@
 //! waits, performs I/O, or takes a lock. All tracks continue consuming while
 //! muted or excluded by solo, keeping them synchronized with live audio.
 //!
-//! Rates clamp to 8..=192 kHz; target buffering clamps to 20..=200 ms. Every
+//! Rates clamp to 8..=192 kHz; initial buffering clamps to 20..=200 ms. After
+//! starvation, each track can adapt its target up to 400 ms. Every
 //! queue holds at least 500 ms at 192 kHz. A track starts only after its target
 //! prefill, and re-primes after starvation, reset, or a running rate change.
 //! EQ runs at the output rate, so bands at/above its Nyquist are bypassed.
@@ -50,7 +51,7 @@ pub struct Mixer {
 
 /// Preallocate all 16 tracks, their independent SPSC queues, filter banks, and
 /// resampling tables. Tracks initially inactive; source rate initially equals
-/// output rate. Use `buffer_ms = 60` for the default latency target.
+/// output rate. GUI receivers use `buffer_ms = 150` as an initial target.
 #[allow(clippy::type_complexity)] // Keep the agreed tuple API explicit.
 pub fn new_mixer(
     output_rate: u32,
@@ -70,7 +71,7 @@ pub fn new_mixer(
         .map(|_| {
             // 500 ms at the largest supported source rate, with extra lookahead.
             let (producer, consumer) = RingBuffer::new(96_000 + 1024);
-            let control = Arc::new(TrackControls::new(output_rate));
+            let control = Arc::new(TrackControls::new(output_rate, buffer_ms));
             producers.push(producer);
             controls.push(Arc::clone(&control));
             Track::new(consumer, control, output_rate, buffer_ms, &design)
@@ -153,6 +154,7 @@ struct Track {
     primed: bool,
     output_rate: u32,
     buffer_ms: u32,
+    target_buffer_ms: u32,
     smoothed_occupancy: f64,
     correction: f64,
     occupancy_initialized: bool,
@@ -181,6 +183,7 @@ impl Track {
             primed: false,
             output_rate,
             buffer_ms,
+            target_buffer_ms: buffer_ms,
             smoothed_occupancy: 0.0,
             correction: 0.0,
             occupancy_initialized: false,
@@ -205,6 +208,22 @@ impl Track {
         self.last_filtered = [0.0; 2];
         self.correction = 0.0;
         self.occupancy_initialized = false;
+        self.target_buffer_ms = self.buffer_ms;
+        self.publish_buffer();
+    }
+
+    fn publish_buffer(&self) {
+        let frames = self.consumer.slots() as f64 + self.resampler.future_source_frames();
+        self.controls
+            .buffered_frames
+            .store(frames as u32, Ordering::Relaxed);
+        self.controls
+            .target_buffer_ms
+            .store(self.target_buffer_ms, Ordering::Relaxed);
+        self.controls.primed.store(self.primed, Ordering::Relaxed);
+        self.controls
+            .drift_ppm
+            .set((self.correction * 1_000_000.0) as f32);
     }
 
     fn render(
@@ -233,6 +252,7 @@ impl Track {
             }
             self.active = false;
             self.controls.tone.peak.set(0.0);
+            self.publish_buffer();
             return;
         }
         self.active = true;
@@ -249,12 +269,17 @@ impl Track {
         self.right
             .set(gain * (1.0 + snapshot.balance.min(0.0)), ramp);
         self.preamp.set(db_to_linear(snapshot.tone.preamp_db), ramp);
-        let target = snapshot.rate as f64 * self.buffer_ms as f64 / 1000.0;
+        // Starting with less than one complete render block plus sinc
+        // lookahead causes an immediate underrun even on a perfect network.
+        let start_guard = (output.len() as f64 * snapshot.rate as f64 / self.output_rate as f64
+            * (1.0 + MAX_DRIFT))
+            .ceil() as usize
+            + self.resampler.minimum_prefill();
+        let guard_ms = (start_guard as u64 * 1000).div_ceil(snapshot.rate as u64) as u32;
+        self.target_buffer_ms = self.target_buffer_ms.max(guard_ms.min(400));
+        let target = snapshot.rate as f64 * self.target_buffer_ms as f64 / 1000.0;
         let available = self.consumer.slots();
-        if !self.primed
-            && table_ready
-            && available >= (target.ceil() as usize).max(self.resampler.minimum_prefill())
-        {
+        if !self.primed && table_ready && available >= (target.ceil() as usize).max(start_guard) {
             self.resampler.clear();
             self.equalizer.clear();
             self.primed = true;
@@ -280,6 +305,13 @@ impl Track {
                     self.primed = false;
                     self.resampler.clear();
                     self.occupancy_initialized = false;
+                    self.correction = 0.0;
+                    // Repeating the same too-small prefill creates recurring
+                    // dropouts on lossless but batched Wi-Fi/driver delivery.
+                    // Grow once per running->starved event and retain the new
+                    // target until an explicit session/rate reset.
+                    self.target_buffer_ms =
+                        (self.target_buffer_ms + (self.target_buffer_ms / 2).max(20)).min(400);
                     self.controls.underrun_count.fetch_add(1, Ordering::Relaxed);
                     self.gate.set(0.0, (ramp / 2).max(1));
                 }
@@ -309,6 +341,7 @@ impl Track {
             self.correction += (dt / (0.1 + dt)) * (desired - self.correction);
         }
         self.controls.tone.peak.set(peak);
+        self.publish_buffer();
     }
 }
 

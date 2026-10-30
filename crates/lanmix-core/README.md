@@ -7,7 +7,11 @@ controls, and shared master controls. Construct and drop these outside the
 audio callback; call `Mixer::render` inside it. All queues, tables, windows and
 filter banks are allocated at construction. Each queue has 97,024 stereo slots,
 covering more than 500 ms at the maximum 192 kHz source rate. Tracks start
-inactive. Pass 60 for the default buffer target; values clamp to 20–200 ms.
+inactive. Initial targets clamp to 20–200 ms; the GUI defaults to 150 ms.
+Each starvation event grows that source's target by 50% (at least 20 ms), up
+to 400 ms. It stays at that target until a session/rate reset. Start also waits
+for at least a complete output block plus resampler lookahead, so large output
+requests cannot immediately exhaust an otherwise valid prefill.
 
 Track and master gain/preamp range from -60 to +12 dB, EQ bands from -12 to
 +12 dB, and stereo balance from -1 to +1. NaN becomes zero; infinities and
@@ -17,9 +21,12 @@ continue consuming input. Only active solo tracks affect solo selection.
 
 Gain, balance, mute and solo use 10 ms ramps. Priming and starvation recovery
 use 5 ms fades. On starvation the last filtered stereo sample fades out;
-the track then waits for a full prefill and fades back in. This conceals queue
+the track then waits for its enlarged prefill and fades back in. This conceals queue
 starvation, but does not detect gaps represented by explicit input zero frames.
 An underrun counts a running-to-starved transition, not every silent callback.
+
+Controls expose `buffered_frames()`, `target_buffer_ms()`, `primed()`, and
+`drift_ppm()` as allocation-free atomic diagnostics at render boundaries.
 
 For discontinuities, call `set_active(false)`, `reset()`, `set_sample_rate(rate)`,
 then `set_active(true)`. Reset and deactivation increment an atomic generation,
@@ -42,6 +49,8 @@ Clock correction measures queue occupancy plus unplayed sinc lookahead,
 averages callback start/end occupancy, and smooths it with a 750 ms time
 constant. A proportional controller targets the requested buffer depth, with
 correction bounded to +/-5,000 ppm and an additional 100 ms ratio smoother.
+The occupancy target follows the adaptive buffer, and starvation resets clock
+correction rather than carrying a stale rate adjustment into recovery.
 There is no frame dropping or duplication for ordinary clock correction.
 
 EQ is ten RBJ peaking biquads with Q=sqrt(2), independent f64 stereo states,

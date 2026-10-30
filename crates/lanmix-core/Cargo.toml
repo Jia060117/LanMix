@@ -1,6 +1,6 @@
 [package]
 name = "lanmix-core"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Preallocated real-time stereo mixing and asynchronous sample-rate conversion"
 license = "MIT OR Apache-2.0"

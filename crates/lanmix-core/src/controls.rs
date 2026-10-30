@@ -83,10 +83,14 @@ pub struct TrackControls {
     balance: AtomicFloat,
     pub(crate) tone: ToneControls,
     pub(crate) underrun_count: AtomicU64,
+    pub(crate) buffered_frames: AtomicU32,
+    pub(crate) target_buffer_ms: AtomicU32,
+    pub(crate) primed: AtomicBool,
+    pub(crate) drift_ppm: AtomicFloat,
 }
 
 impl TrackControls {
-    pub(crate) fn new(rate: u32) -> Self {
+    pub(crate) fn new(rate: u32, buffer_ms: u32) -> Self {
         Self {
             lifecycle: AtomicU64::new(0),
             rate: AtomicU32::new(rate),
@@ -95,6 +99,10 @@ impl TrackControls {
             balance: AtomicFloat::new(0.0),
             tone: ToneControls::new(0.0),
             underrun_count: AtomicU64::new(0),
+            buffered_frames: AtomicU32::new(0),
+            target_buffer_ms: AtomicU32::new(buffer_ms),
+            primed: AtomicBool::new(false),
+            drift_ppm: AtomicFloat::new(0.0),
         }
     }
 
@@ -165,6 +173,25 @@ impl TrackControls {
     /// underrun, and consecutive silent callbacks count as a single event.
     pub fn underruns(&self) -> u64 {
         self.underrun_count.load(Ordering::Relaxed)
+    }
+
+    /// Unplayed source frames at the last render boundary, including lookahead.
+    pub fn buffered_frames(&self) -> u32 {
+        self.buffered_frames.load(Ordering::Relaxed)
+    }
+
+    /// Current adaptive target. The configured value is a lower bound;
+    /// starvation can increase it to 400 ms for this source's current session.
+    pub fn target_buffer_ms(&self) -> u32 {
+        self.target_buffer_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn primed(&self) -> bool {
+        self.primed.load(Ordering::Relaxed)
+    }
+
+    pub fn drift_ppm(&self) -> f32 {
+        self.drift_ppm.get()
     }
 
     pub(crate) fn snapshot(&self) -> TrackSnapshot {

@@ -27,7 +27,9 @@ cargo build --release -p lanmix-sender -p lanmix-receiver
 .\target\release\lanmix-receiver.exe
 ```
 
-在接收端点击 **Start receiver**。默认监听 UDP `46210`，默认缓冲 60ms。输出采用设备默认采样率；可以选择设备和工作采样率，点击 **Apply / restart** 应用。
+在接收端点击 **Start receiver**。默认监听 UDP `46210`，新安装的图形接收端默认初始缓冲 150ms，已有设置保留。输出采用设备默认采样率；可以选择设备和工作采样率，点击 **Apply / restart** 应用。
+
+**0.1.1 连续播放修复：** 每路缺粮后自动扩大缓冲目标，最高 400ms；缺包等待时间随缓冲调整，避免过早把迟到的音频替换成静音。界面显示实际缓冲、目标值和缺粮次数。升级后建议先把初始缓冲改为 **150ms** 再启动，详见 [断音诊断与验证](docs/AUDIO-DROPOUTS.md)。这会增加缓冲时间，优先保证连续播放。
 
 在每台 Windows 发送设备上运行：
 

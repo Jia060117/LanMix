@@ -144,7 +144,9 @@ fn tracks() -> Result<String> {
         return Ok(r#"{"tracks":[],"stats":{},"meters":[],"running":false}"#.into());
     };
     let meters: Vec<_> = receiver.controls.iter().enumerate().map(|(slot, c)| {
-        serde_json::json!({"slot": slot, "peak": c.peak(), "underruns": c.underruns()})
+        serde_json::json!({"slot": slot, "peak": c.peak(), "underruns": c.underruns(),
+            "buffered_ms": c.buffered_frames() as f64 * 1000.0 / c.sample_rate() as f64,
+            "target_buffer_ms": c.target_buffer_ms(), "primed": c.primed(), "drift_ppm": c.drift_ppm()})
     }).collect();
     Ok(serde_json::json!({"running": true, "tracks": receiver.snapshot(), "stats": receiver.stats(), "meters": meters,
         "master": {"peak": receiver.master.peak(), "clipped_frames": receiver.master.clipped_frames()}}).to_string())

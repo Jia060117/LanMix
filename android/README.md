@@ -24,7 +24,13 @@ must already be installed. The script does not install or launch devices.
 
 Open the Activity, allow local network access on Android 17+, and press Start.
 Send LanMix unicast UDP to the displayed IPv4 address, default port **46210** and
-network jitter buffer **60 ms** (adjustable 20–200 ms). INTERNET is declared;
+initial network jitter buffer **150 ms** for new installs (adjustable 20–200 ms).
+Existing saved values are retained; after upgrading, start with 150 ms for
+Wi-Fi if a smaller setting was previously used. Each starving source increases
+its own target up to 400 ms until a session/rate reset. Source buffer occupancy,
+adaptive target, and underrun count appear near the receiver controls and in
+each source card. These source underruns are separate from AudioTrack underruns.
+INTERNET is declared;
 target API 37 also uses ACCESS_LOCAL_NETWORK and requests its runtime grant.
 There is no microphone, AudioRecord, multicast permission, or multicast lock.
 
@@ -71,7 +77,8 @@ GetPrimitiveArrayCritical pinning.
 * `nativeTracks()` returns JSON `{running, tracks, stats, meters, master}`. `tracks`
   and `stats` are the network's serialized snapshots. Track identity uses `slot`,
   `source`, `stream_id`, and `session_id`. Meters add peak/underrun and master
-  clipping counters. Diagnostics allocate on the UI polling path only.
+  clipping counters. Meters also report `buffered_ms`, `target_buffer_ms`,
+  `primed`, and `drift_ppm`. Diagnostics allocate on the UI polling path only.
 * `nativeSetTrack(index, gainDb, mute, solo, eqEnabled, preampDb, float[10])`.
 * `nativeSetMaster(gainDb, eqEnabled, preampDb, float[10])`. Gain is decibels.
 

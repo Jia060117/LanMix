@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var mix: MixState
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
+    private lateinit var bufferHealth: TextView
     private lateinit var actual: TextView
     private lateinit var capabilities: TextView
     private lateinit var networkStats: TextView
@@ -145,13 +146,16 @@ class MainActivity : Activity() {
         val connection = card(root, "Receiver")
         status = text("Ready · start to open the UDP receiver", 14, accent)
         connection.addView(status)
+        bufferHealth = text("Source buffer diagnostics appear here while receiving", 12, subtle)
+        connection.addView(bufferHealth)
         connection.addView(text("Send unicast UDP to this device:\n${localAddresses()}", 13, subtle).apply { setTextIsSelectable(true) })
         val inputs = LinearLayout(this)
         port = numberInput("UDP port", preferences.getInt("port", 46210).toString())
-        buffer = numberInput("Jitter buffer / ms", preferences.getInt("buffer", 60).toString())
+        buffer = numberInput("Initial jitter buffer / ms", preferences.getInt("buffer", 150).toString())
         inputs.addView(field("UDP port", port), LinearLayout.LayoutParams(0, -2, 1f))
         inputs.addView(field("Buffer / ms · 20–200", buffer), LinearLayout.LayoutParams(0, -2, 1f))
         connection.addView(inputs)
+        connection.addView(text("Initial target; a starving source can adapt up to 400 ms to keep playback continuous. Try 150 ms for Wi-Fi.", 12, subtle))
         startButton = Button(this).apply {
             text = "Start receiver"; isAllCaps = false
             setOnClickListener {
@@ -309,11 +313,17 @@ class MainActivity : Activity() {
             val meter = json.optJSONArray("meters")?.optJSONObject(slot)
             views.second.text = "Source ${item.optInt("sample_rate")} Hz · stereo PCM float\n" +
                 "Packets ${item.optLong("packets")} · lost frames ${item.optLong("lost_frames")} · late ${item.optLong("late_packets")}\n" +
-                "Queue overflow ${item.optLong("queue_overflows")} · underruns ${meter?.optLong("underruns") ?: 0} · peak ${peak(meter?.optDouble("peak") ?: 0.0)}"
+                "Queue overflow ${item.optLong("queue_overflows")} · underruns ${meter?.optLong("underruns") ?: 0} · peak ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
+                "Buffer ${String.format(Locale.US, "%.1f", meter?.optDouble("buffered_ms") ?: 0.0)} / target ${meter?.optInt("target_buffer_ms") ?: 0} ms · ${if (meter?.optBoolean("primed") == true) "playing" else "buffering"}"
         }
         trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "No source in this receiver slot"; views.second.text = "Waiting for this session" }
         emptySources.visibility = if (seen.isEmpty()) View.VISIBLE else View.GONE
         val stats = json.optJSONObject("stats") ?: JSONObject()
+        val meters = json.optJSONArray("meters")
+        bufferHealth.text = if (seen.isEmpty()) "Waiting for source audio…" else seen.sorted().joinToString("\n") { slot ->
+            val meter = meters?.optJSONObject(slot)
+            "Source ${slot + 1}: ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / ${meter?.optInt("target_buffer_ms") ?: 0} ms · underruns ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "playing" else "buffering"}"
+        }
         networkStats.text = "Received ${stats.optLong("received_packets")} packets / ${stats.optLong("received_bytes")} bytes\n" +
             "Invalid ${stats.optLong("invalid_packets")} · rejected sources ${stats.optLong("rejected_sources")}"
         val master = json.optJSONObject("master")

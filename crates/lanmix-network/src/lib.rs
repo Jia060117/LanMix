@@ -175,15 +175,35 @@ struct Pending {
     arrived: Instant,
 }
 
-#[derive(Default)]
 struct Timeline {
     next: Option<u64>,
     pending: BTreeMap<u64, Pending>,
     late: u64,
     lost: u64,
+    reorder_wait: Duration,
+}
+
+impl Default for Timeline {
+    fn default() -> Self {
+        Self {
+            next: None,
+            pending: BTreeMap::new(),
+            late: 0,
+            lost: 0,
+            reorder_wait: Duration::from_millis(12),
+        }
+    }
 }
 
 impl Timeline {
+    fn set_buffer_ms(&mut self, buffer_ms: u32) {
+        // Leave playback headroom, but use the reservoir the user actually
+        // selected. A fixed 12 ms deadline discards recoverable Wi-Fi packets
+        // even when tens/hundreds of milliseconds of audio are still buffered.
+        self.reorder_wait =
+            Duration::from_millis(buffer_ms.saturating_sub(30).clamp(12, 200) as u64);
+    }
+
     fn insert(&mut self, index: u64, frames: Vec<StereoFrame>, now: Instant) {
         let Some(end) = index.checked_add(frames.len() as u64) else {
             self.late += 1;
@@ -244,7 +264,7 @@ impl Timeline {
             };
             // A bounded wait allows reordering, without letting one missing packet stall a stream.
             let gap_discovered = self.pending.values().map(|p| p.arrived).min().unwrap();
-            if now.saturating_duration_since(gap_discovered) < Duration::from_millis(12) {
+            if now.saturating_duration_since(gap_discovered) < self.reorder_wait {
                 break;
             }
             let gap = first.saturating_sub(next) as usize;
@@ -368,6 +388,7 @@ fn receive_loop(
                 fade_in,
                 ..
             } = slot;
+            timeline.set_buffer_ms(controls[index].target_buffer_ms());
             timeline.drain(now, |frames, count| {
                 if let Some(frames) = frames {
                     for frame in frames {
@@ -494,6 +515,53 @@ fn handle_packet(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_buffer_recovers_thirty_millisecond_reordering_without_false_loss() {
+        let mut timeline = Timeline::default();
+        timeline.set_buffer_ms(70);
+        let now = Instant::now();
+        timeline.insert(0, vec![[0.1; 2]; 96], now);
+        let mut audio = Vec::new();
+        timeline.drain(now, |frames, _| audio.extend_from_slice(frames.unwrap()));
+        timeline.insert(192, vec![[0.3; 2]; 96], now);
+        timeline.drain(now + Duration::from_millis(20), |_, _| {
+            panic!("a 70 ms buffer must not conceal a recoverable 20 ms reorder");
+        });
+        timeline.insert(96, vec![[0.2; 2]; 96], now + Duration::from_millis(30));
+        timeline.drain(now + Duration::from_millis(30), |frames, _| {
+            audio
+                .extend_from_slice(frames.expect("received audio was falsely replaced by silence"));
+        });
+        assert_eq!(
+            audio,
+            [vec![[0.1; 2]; 96], vec![[0.2; 2]; 96], vec![[0.3; 2]; 96]].concat()
+        );
+        assert_eq!(timeline.lost, 0);
+        assert_eq!(timeline.late, 0);
+    }
+
+    #[test]
+    fn buffer_aware_reordering_still_expires_for_real_loss() {
+        let mut timeline = Timeline::default();
+        timeline.set_buffer_ms(70);
+        let now = Instant::now();
+        timeline.insert(0, vec![[0.1; 2]; 96], now);
+        timeline.drain(now, |_, _| {});
+        timeline.insert(192, vec![[0.3; 2]; 96], now);
+        timeline.drain(now + Duration::from_millis(39), |_, _| {
+            panic!("deadline moved early")
+        });
+        let mut missing = 0;
+        timeline.drain(now + Duration::from_millis(40), |frames, count| {
+            if frames.is_none() {
+                missing += count;
+            }
+        });
+        assert_eq!(missing, 96);
+        assert_eq!(timeline.next, Some(288));
+        assert_eq!(timeline.lost, 96);
+    }
 
     #[test]
     fn reordered_packets_preserve_timeline_and_duplicates_are_ignored() {

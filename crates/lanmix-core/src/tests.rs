@@ -200,6 +200,16 @@ fn starvation_is_concealed_and_recovery_is_ramped() {
     assert_eq!(controls[0].underruns(), 0);
     fill(&mut producers[0], 1200, [0.25; 2]);
     mixer.render(&mut out);
+    assert_eq!(controls[0].underruns(), 0);
+    assert!(
+        !controls[0].primed(),
+        "must wait for a complete render block"
+    );
+    assert!(out.iter().all(|frame| *frame == [0.0; 2]));
+    fill(&mut producers[0], 1800, [0.25; 2]);
+    mixer.render(&mut out);
+    assert!(controls[0].primed());
+    mixer.render(&mut out);
     assert_eq!(controls[0].underruns(), 1);
     assert!(out.windows(2).all(|x| (x[1][0] - x[0][0]).abs() < 0.002));
     settled(&out, [0.0; 2], 1e-6);
@@ -380,6 +390,62 @@ fn long_clock_drift_is_bounded_and_tracks_real_source_rate() {
         );
         assert!(correction.abs() <= MAX_DRIFT);
     }
+}
+
+#[test]
+fn batched_delivery_stops_repeatedly_starving_after_buffer_adapts() {
+    // Model lossless Wi-Fi/driver delivery in 120 ms bursts, while the output
+    // requests 10 ms blocks. A fixed 70 ms target keeps re-priming too early.
+    let (mut mixer, mut producers, controls, _) = new_mixer(8000, 70);
+    controls[0].set_active(true);
+    let mut output = [[0.0; 2]; 80];
+    let mut warmup_underruns = 0;
+    for tick in 0..1200 {
+        if tick % 12 == 0 {
+            fill(&mut producers[0], 960, [0.1; 2]);
+        }
+        mixer.render(&mut output);
+        if tick == 199 {
+            warmup_underruns = controls[0].underruns();
+        }
+    }
+    assert!(warmup_underruns > 0, "fixture did not exercise starvation");
+    eprintln!(
+        "120 ms bursts: {warmup_underruns} warmup underruns, final {} ms target",
+        controls[0].target_buffer_ms()
+    );
+    assert_eq!(
+        controls[0].underruns(),
+        warmup_underruns,
+        "lossless batched delivery must not keep cutting out after warmup"
+    );
+    settled(&output, [0.1 * db_to_linear(-6.0); 2], 1e-5);
+    assert!(controls[0].target_buffer_ms() > 70 && controls[0].target_buffer_ms() <= 400);
+    assert!(controls[0].primed());
+    assert!(controls[0].buffered_frames() > 0);
+}
+
+#[test]
+fn adaptive_buffer_is_bounded_and_session_reset_restores_initial_target() {
+    let (mut mixer, mut producers, controls, _) = new_mixer(8000, 20);
+    controls[0].set_active(true);
+    let mut output = [[0.0; 2]; 80];
+    for _ in 0..12 {
+        fill(&mut producers[0], 4000, [0.1; 2]);
+        let before = controls[0].underruns();
+        for _ in 0..60 {
+            mixer.render(&mut output);
+        }
+        assert_eq!(controls[0].underruns(), before + 1);
+        assert!(controls[0].target_buffer_ms() <= 400);
+    }
+    assert_eq!(controls[0].target_buffer_ms(), 400);
+    controls[0].reset();
+    mixer.render(&mut output);
+    assert_eq!(controls[0].target_buffer_ms(), 20);
+    assert_eq!(controls[0].buffered_frames(), 0);
+    assert!(!controls[0].primed());
+    assert_eq!(controls[0].drift_ppm(), 0.0);
 }
 
 #[test]

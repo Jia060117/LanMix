@@ -1,5 +1,26 @@
 # Verified Android build
 
+## 0.1.1 buffer continuity update · 2026-10-31
+
+`./android/build.ps1 -Offline` rebuilt both ARM libraries, `assembleDebug`, and
+`lintDebug` successfully. Version **0.1.1 / code 2**, package unchanged.
+
+- APK size: **1,852,540 bytes**.
+- SHA-256: `B62367661578BF35B24C3BD16BCE571744ACEB1980B29F6D864BAF9ADD257470`.
+- Lint XML: **0 errors, 53 warnings**; no baseline hides findings.
+- APK v2 signature and `zipalign -c -P 16 4` passed.
+- Host JVM `-Xcheck:jni` passed again, including the actual new buffer diagnostic
+  JSON fields, real UDP, rendering, concurrent controls and lifecycle checks.
+- Workspace checks: strict Clippy, formatting and **41 passing tests**.
+
+The change adds adaptive per-source buffering, buffer-aware network reordering,
+and visible source buffer diagnostics. See [the investigation](../docs/AUDIO-DROPOUTS.md).
+The user's recording was inspected, but this APK has not been installed or
+auditioned on their physical phone by the agent. Physical-device improvement
+still needs confirmation. The following section records the earlier APK only.
+
+## Historical 0.1.0 build
+
 Final APK built **2026-10-31 00:49:45 Asia/Shanghai**, after the shared core's
 boxed-track constructor change and latest network fixes. Changes are confined
 to `android/` and `crates/lanmix-android/`; root manifests were not edited.

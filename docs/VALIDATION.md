@@ -6,17 +6,19 @@
 
 - `cargo fmt --all -- --check`：通过。
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`：通过；第三方 CPAL 原有两条编译警告仍在，未通过关闭项目检查来掩盖。
-- `cargo test --locked --workspace`：37 项协议、DSP、网络和 JNI 参数/生命周期测试通过。
+- `cargo test --locked --workspace`：0.1.1 的 41 项协议、DSP、网络和 JNI 参数/生命周期测试通过。
 - `cargo test --manifest-path vendor/cpal/Cargo.toml --lib`：6 项通过，包含 4 项 WASAPI 静音缓冲补丁测试。
 - `scripts/build-desktop.ps1`：Windows x64 release 构建与复制完成。
 
 核心测试覆盖：增益和预放大、静音/独听、平衡、EQ 的频带响应、不同来源采样率、抗混叠、双声道独立状态、缓冲耗尽渐变、重置与重连、非有限输入和最终上限、处理路径零分配、小平台栈构造。时钟测试分别模拟正负 2000ppm 偏差各 60 秒，缓冲有界且未欠载；这是模拟时间，不是多台实体声卡的长时间运行报告。
 
-网络测试覆盖：去重、乱序、交叠包、12ms 缺包截止时间、重排容量上限、容量满时优先接收当前缺口、旧会话隔离、旧格式包不能回退时间线、新设备静音门控、重连控制保留、槽位复用后参数重置。
+网络测试覆盖：去重、乱序、交叠包、最低 12ms 缺包截止时间、按缓冲延长等待以恢复 30ms 重排、真实缺包的有界等待、重排容量上限、容量满时优先接收当前缺口、旧会话隔离、旧格式包不能回退时间线、新设备静音门控、重连控制保留、槽位复用后参数重置。
+
+0.1.1 增加无丢包、120ms 成批交付场景：旧策略在 12 秒模拟时间内缺粮 100 次；新策略预热缺粮 2 次后升至 157ms，余下 10 秒无新增缺粮。另验证 400ms 上限、会话重置恢复初始值、完整输出块预填充，以及新诊断字段通过实际 JNI 返回。它们是可重复的代码验证，未把模拟结果等同于真机听感改善。详见 [断音记录](AUDIO-DROPOUTS.md)。
 
 ## 真实进程与 UDP 测试
 
-执行 `python scripts/smoke_test.py --bin-dir dist/windows-x64`：
+0.1.1 执行 `python scripts/smoke_test.py --bin-dir dist/windows-x64-0.1.1`：
 
 | 项目 | 结果 |
 |---|---:|
@@ -42,8 +44,8 @@ Windows WASAPI 回环也已实际打开，通过采集队列向另一 headless �
 
 Android 使用原生 Kotlin Activity、AudioTrack 浮点写入线程和共享 Rust JNI；不是 Oboe 回调。提供 ARM64 和 ARMv7 安装包，构建和 JNI 检查详情见 `android/README.md`。APK 使用开发调试签名。
 
-最终 APK 已重新构建，包含两种 ARM 架构和全部 6 个 JNI 导出；签名、16KB ELF 对齐和 ZIP 对齐检查通过。Android lint 为 0 个错误、48 条警告，主要涉及国际化、图标、备份配置及未包含的 ChromeOS 架构。真实 JVM `-Xcheck:jni` 测试通过，覆盖 UDP、静音门控、控制并发、数组校验和采样率重启；详细记录见 `android/BUILD-STATUS.md`。
+0.1.1 APK 已重新构建，包含两种 ARM 架构和全部 6 个 JNI 导出；签名和 ZIP 对齐检查通过。Android lint 为 0 个错误、53 条警告，主要涉及国际化、图标、备份配置及未包含的 ChromeOS 架构。真实 JVM `-Xcheck:jni` 测试通过，覆盖 UDP、静音门控、控制并发、新缓冲诊断、数组校验和采样率重启；详细记录见 `android/BUILD-STATUS.md`。
 
 **未进行 Android 真机安装、蓝牙/有线/USB 耳机听音、拔插与锁屏场景验证。** Android 当前在 Activity 可见时接收，转入后台会停止。物理硬件位深、蓝牙编码状态和链路音质不由应用流格式直接证明。
 
-Linux/macOS 添加了 CI 检查配置，但本地未运行这些平台；macOS 系统声音采集和 iOS 应用外壳尚未实现。CI 配置文件的存在不代表远端 CI 已执行。自动发现、配对加密、后台服务和真正的前瞻限幅器也不包含在本版中。
+Linux/macOS 添加了 CI 检查配置，但本地未运行这些平台；macOS 系统声音采集和 iOS 应用外壳尚未实现。远端 CI 状态以 GitHub 实际运行记录为准。自动发现、配对加密、后台服务和真正的前瞻限幅器也不包含在本版中。

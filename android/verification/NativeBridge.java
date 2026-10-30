@@ -63,6 +63,8 @@ public final class NativeBridge {
             send(sender, port, 0, 50);
             String snapshot = bridge.nativeTracks();
             require(snapshot.contains("\"stream_id\":7") && snapshot.contains("\"source\":\"127.0.0.1\""), "real UDP snapshot");
+            require(snapshot.contains("\"target_buffer_ms\":") && snapshot.contains("\"buffered_ms\":")
+                && snapshot.contains("\"primed\":") && snapshot.contains("\"drift_ppm\":"), "buffer diagnostics cross JNI");
             bridge.nativeFill(output); // process receiver lifecycle/reset while gated
             send(sender, port, 50, 50);
             bridge.nativeFill(output);
