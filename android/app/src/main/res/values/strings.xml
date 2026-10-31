@@ -1,0 +1,11 @@
+<resources>
+    <string name="receiver_channel">局域网音频接收</string>
+    <string name="receiver_channel_description">后台接收与混音状态，可随时停止</string>
+    <string name="receiver_notification_title">LanMix 后台接收中</string>
+    <string name="receiver_notification_starting">正在启动局域网音频</string>
+    <string name="receiver_notification_active">UDP %1$d · 与其他应用同时播放</string>
+    <string name="receiver_notification_stopping">正在停止接收</string>
+    <string name="receiver_stop">停止接收</string>
+    <string name="receiver_background_hint">切换应用或锁屏后继续接收。通知栏可停止；与其他音乐、视频应用同时播放。</string>
+    <string name="receiver_shared_hint">共享音频输出 · 不主动抢占音频焦点。系统或其他应用的独占策略可能影响同时播放。</string>
+</resources>

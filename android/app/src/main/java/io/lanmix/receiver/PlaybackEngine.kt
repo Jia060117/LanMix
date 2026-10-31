@@ -2,7 +2,6 @@ package io.lanmix.receiver
 
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRouting
@@ -23,9 +22,14 @@ class PlaybackEngine(
     private val onStatus: (String, Boolean) -> Unit,
     private val onActual: (String) -> Unit,
     private val onReady: () -> Unit,
-    private val onFocusLost: () -> Unit,
     private val onEvent: (String) -> Unit = {}
 ) {
+    private companion object {
+        // Across service recreation, old close/join must finish before a new
+        // engine opens the process-wide JNI receiver. Never run two controllers.
+        val lifecycle = Executors.newSingleThreadExecutor { Thread(it, "LanMix-lifecycle") }
+        var activeWorker: Thread? = null // lifecycle executor only
+    }
     data class Config(val port: Int, val bufferMs: Int, val device: AudioDeviceInfo?, val rate: Int,
                       val mode: PlaybackMode = PlaybackMode.STABLE)
     private data class PlaybackReport(
@@ -38,12 +42,13 @@ class PlaybackEngine(
     )
     private class Session(val track: AudioTrack, val live: AtomicBoolean, val worker: Thread)
     private val handler = Handler(Looper.getMainLooper())
-    private val controller = Executors.newSingleThreadExecutor { Thread(it, "LanMix-lifecycle") }
+    private val controller = lifecycle
     private val generation = AtomicInteger()
     private var session: Session? = null // controller thread only
     @Volatile private var closed = false
     @Volatile private var config: Config? = null
-    @Volatile private var focusRequest: AudioFocusRequest? = null
+    // Intentional shared playback: do not request AUDIOFOCUS_GAIN, create a
+    // MediaSession, use communication mode, or select an exclusive output.
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
 
@@ -83,10 +88,10 @@ class PlaybackEngine(
         config = null
         generation.incrementAndGet()
         controller.execute { runCatching { stopInternal() } }
-        controller.shutdown()
     }
 
     private fun open(next: Config, token: Int, autoRateHint: Int?) {
+        check(activeWorker?.isAlive != true) { "Previous audio worker is still stopping; replacement refused" }
         val rate = next.rate.takeIf { it != 0 } ?: autoRateHint ?: OutputDevices.autoRate(manager, next.device)
         val format = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
             .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build()
@@ -99,12 +104,6 @@ class PlaybackEngine(
         try {
             check(track.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack initialization failed" }
             if (next.device != null) check(track.setPreferredDevice(next.device)) { "Output preference rejected" }
-            val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attributes)
-                .setOnAudioFocusChangeListener({ change ->
-                    if (change != AudioManager.AUDIOFOCUS_GAIN && generation.get() == token && !closed) onFocusLost()
-                }, handler).build()
-            check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Audio focus denied" }
-            focusRequest = focus
             NativeBridge.nativeStart(next.port, next.bufferMs, track.sampleRate)
             nativeStarted = true
             val live = AtomicBoolean(true)
@@ -210,18 +209,16 @@ class PlaybackEngine(
                     runCatching { track.pause(); track.flush(); track.stop() }
                     runCatching { NativeBridge.nativeStop() }
                     track.release()
-                    manager.abandonAudioFocusRequest(focus)
                     val summary = "会话 #$token 结束：输出缺粮 $finalUnderruns，扩容 $finalIncreases${failure?.let { "，错误 $it" } ?: ""}"
                     handler.post { if (!closed) onEvent(summary) } // survive generation change/rebuild
                     failure?.let { message -> post(token) { onStatus("播放已停止：$message", false) } }
                 }
             }, "LanMix-PCM-float")
             session = Session(track, live, worker)
+            activeWorker = worker
             worker.start()
         } catch (e: Exception) {
             if (nativeStarted) NativeBridge.nativeStop()
-            focusRequest?.let { manager.abandonAudioFocusRequest(it) }
-            focusRequest = null
             track.release()
             throw e
         }
@@ -237,8 +234,6 @@ class PlaybackEngine(
             check(!current.worker.isAlive) { "Audio worker did not stop; replacement refused" }
             session = null
         }
-        focusRequest?.let { manager.abandonAudioFocusRequest(it) }
-        focusRequest = null
     }
 
     private fun post(token: Int, action: () -> Unit) {

@@ -1,6 +1,6 @@
 # LanMix native Android receiver
 
-Current Android package: **0.1.4 / version code 5**. Pair with the 0.1.4 Windows
+Current Android package: **0.1.5 / version code 6**. Pair with the 0.1.4 Windows
 sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
@@ -9,7 +9,8 @@ survives source resets. Clipboard output puts source/marker/history before devic
 capabilities and omits unused meter slots. See
 [diagnostic interpretation and recovery limits](../docs/PLAYBACK-DROPOUTS.md).
 
-Native Kotlin Activity, no external UI libraries, minimum Android 8 / API 26.
+Native Kotlin Activity and playback foreground service, no external UI libraries,
+minimum Android 8 / API 26.
 Build and target API 37, the newest stable platform installed on this host (its
 `source.properties` reports Android 17, preview SDK 0, no beta codename). Android
 Gradle plugin 9.3.2 includes Kotlin support; cached Gradle 9.6.1 and Android
@@ -43,11 +44,26 @@ INTERNET is declared;
 target API 37 also uses ACCESS_LOCAL_NETWORK and requests its runtime grant.
 There is no microphone, AudioRecord, multicast permission, or multicast lock.
 
-This version intentionally runs only while the Activity is visible. `onStop`
-closes audio and UDP. The screen stays awake while receiving; there is no
-foreground service or background audio support. Audio focus loss stops playback
-and requires tapping Start again. Settings survive a restart; the receiver does
-not automatically resume.
+The user starts a `mediaPlayback` foreground service from the visible Activity.
+The service owns UDP/audio, source-control binding and diagnostics. Activity
+`onStop`/`onDestroy`, screen locking and removing the Activity task no longer
+request a stop. A low-importance, silent service notification opens controls or
+stops reception; there is no MediaSession or media-button takeover. The display
+may sleep normally. A renewable partial CPU wake-lock lease expires after two
+minutes unless renewed each minute, and is released on stop/error/destruction.
+Android 13+ notification permission is requested once on user start; denial does
+not prevent a foreground service, but can hide its notification-drawer controls.
+The application can always stop it from its own UI. `START_NOT_STICKY` avoids
+unexpected playback after system process termination; no boot receiver is added.
+
+Playback intentionally does not request audio focus or change system music
+volume/communication mode. Raw PCM continues through the shared AudioTrack
+mixer alongside other applications when device/app policy permits. This is an
+explicit user-requested concurrent-audio tool, not a claim that every OEM or
+exclusive player supports simultaneous playback. The backend remains AudioTrack,
+not MediaPlayer/ExoPlayer or an exclusive AAudio stream. Background/lockscreen,
+calls and multi-app behavior still need physical-device tests; see
+[scope and test procedure](../docs/ANDROID-BACKGROUND.md).
 
 Output selection calls `AudioTrack.setPreferredDevice`. Android may choose a
 different route. The UI separately shows all `AudioManager.getDevices(OUTPUTS)`
@@ -107,7 +123,7 @@ paces rendering; it does not measure downstream Bluetooth or end-to-end delay.
 Mode and requested sample rate are saved. Changing mode restarts reception.
 The UI has Chinese controls, separately identified network/output buffer health,
 and user-operated mark-dropout and copy-diagnostics buttons. A bounded in-memory
-history survives receiver rebuilds until the Activity is recreated. It includes
+history survives receiver and Activity rebuilds within the process. It includes
 source session/reset changes, lifetime missing-frame concealment, output underruns,
 and near-silence episodes of at least 2 ms observed before AudioTrack writes.
 PCM silence also includes natural silence, mute and startup, so it is not an error
@@ -132,7 +148,8 @@ See [dropout investigation](../docs/PLAYBACK-DROPOUTS.md).
   timeline/session resets for the same source identity, until receiver restart or
   slot reassignment. Initial connection counts as one reset. Meters add peak/underrun and master
   clipping counters. Meters also report `buffered_ms`, `target_buffer_ms`,
-  `primed`, and `drift_ppm`. Diagnostics allocate on the UI polling path only.
+  `primed`, and `drift_ppm`. Diagnostics allocate on the service's main-thread
+  polling path, outside the PCM writer, even when the Activity is hidden.
 * `nativeSetTrack(index, gainDb, mute, solo, eqEnabled, preampDb, float[10])`.
 * `nativeSetMaster(gainDb, eqEnabled, preampDb, float[10])`. Gain is decibels.
 

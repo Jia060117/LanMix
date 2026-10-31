@@ -14,7 +14,7 @@ class PlaybackRoutePolicy(private val rate: Int, private val automatic: Boolean)
     }
 }
 
-/** Activity-owned history survives receiver restarts, but is never written to disk. */
+/** Process-owned history survives screens and receiver restarts, never written to disk. */
 class DiagnosticHistory(private val capacity: Int = 64) {
     private val events = ArrayDeque<String>()
     init { require(capacity > 0) }

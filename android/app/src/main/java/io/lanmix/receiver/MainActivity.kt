@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -19,13 +20,12 @@ import android.os.SystemClock
 import android.text.InputType
 import android.view.View
 import android.view.WindowInsets
-import android.view.WindowManager
 import android.widget.*
 import org.json.JSONObject
 import java.net.NetworkInterface
 import java.util.Locale
 
-/** Activity-only receiver: onStop always closes audio and UDP. No microphone. */
+/** Controls the process state; hiding/recreating this screen never stops the service. */
 class MainActivity : Activity() {
     private val background = Color.rgb(16, 21, 29)
     private val surface = Color.rgb(25, 34, 46)
@@ -34,8 +34,8 @@ class MainActivity : Activity() {
     private val accent = Color.rgb(104, 224, 203)
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var manager: AudioManager
-    private lateinit var engine: PlaybackEngine
-    private lateinit var mix: MixState
+    private val receiver get() = (application as LanMixApplication).receiver
+    private val mix get() = receiver.mix
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
     private lateinit var bufferHealth: TextView
@@ -57,38 +57,25 @@ class MainActivity : Activity() {
     private var selectedRate = 0
     private var playbackMode = PlaybackMode.STABLE
     private var updating = false
-    private var requested = false
-    private var running = false
+    private val requested get() = receiver.requested
+    private val running get() = receiver.running
     private var visible = false
     private val trackViews = mutableMapOf<Int, Pair<TextView, TextView>>()
     private val preferences by lazy { getSharedPreferences("lanmix", MODE_PRIVATE) }
-    private val diagnosticStart = SystemClock.elapsedRealtime()
-    private val history = DiagnosticHistory()
-    private var latestNativeDiagnostics = "{}"
-    private var latestNativeAt = 0L
-    private var markedDiagnostic = "尚未标记闪断"
-    private data class SourceDiagnostic(val session: Long, val lost: Long, val late: Long,
-        val overflow: Long, val underruns: Long, val resets: Long, val primed: Boolean,
-        val gapFilled: Long)
-    private val sourceDiagnostics = mutableMapOf<String, SourceDiagnostic>()
+    private val diagnosticStart get() = receiver.startedAt
+    private val history get() = receiver.history
+    private val latestNativeDiagnostics get() = receiver.diagnostics
+    private val latestNativeAt get() = receiver.sampledAt
+    private var markedDiagnostic: String
+        get() = receiver.marked
+        set(value) { receiver.marked = value }
+    private var displayedEpoch = -1L
+    private val viewIdentities = mutableMapOf<Int, String>()
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateDevices()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = updateDevices()
     }
-    private val poll = object : Runnable {
-        override fun run() {
-            if (!visible) return
-            if (NativeBridge.loadError == null && running) {
-                runCatching {
-                    latestNativeDiagnostics = NativeBridge.nativeTracks()
-                    latestNativeAt = SystemClock.elapsedRealtime() - diagnosticStart
-                    updateTracks(JSONObject(latestNativeDiagnostics))
-                }
-                    .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
-            }
-            handler.postDelayed(this, 750)
-        }
-    }
+    private val receiverObserver: () -> Unit = { syncReceiver() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,26 +87,7 @@ class MainActivity : Activity() {
             .putInt("playback_policy_revision", 1).apply()
         playbackMode = PlaybackMode.fromKey(preferences.getString("playback_mode", null))
         selectedRate = preferences.getInt("output_rate", 0)
-        mix = MixState(preferences)
-        engine = PlaybackEngine(manager,
-            onStatus = { text, active ->
-                running = active
-                status.text = text
-                if (!active) { requested = false; window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-                startButton.text = if (requested) "停止接收" else "开始接收"
-            },
-            onActual = { actual.text = it },
-            onReady = {
-                mix.resetBindings()
-                trackViews.clear()
-                sourceDiagnostics.clear()
-                sources.removeAllViews()
-                emptySources.visibility = View.VISIBLE
-                applyControl { mix.applyMaster() }
-            },
-            onFocusLost = { stopReceiver("音频焦点已改变 · 点击开始恢复") },
-            onEvent = { recordEvent(it) }
-        )
+        selectedId = receiver.config?.deviceId
         createUi()
         if (policyUpgrade) recordEvent("已启用稳定优先：保留系统播放缓冲；均衡/响应为试验模式")
         manager.registerAudioDeviceCallback(deviceCallback, handler)
@@ -133,13 +101,14 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         visible = true
-        handler.post(poll)
+        if (requested) selectedId = receiver.config?.deviceId
+        updateDevices()
+        receiver.observe(receiverObserver)
     }
 
     override fun onStop() {
         visible = false
-        handler.removeCallbacks(poll)
-        stopReceiver("已停止 · 应用已进入后台")
+        receiver.removeObserver(receiverObserver)
         mix.save()
         super.onStop()
     }
@@ -147,7 +116,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         manager.unregisterAudioDeviceCallback(deviceCallback)
         handler.removeCallbacksAndMessages(null)
-        engine.close()
+        receiver.removeObserver(receiverObserver)
         super.onDestroy()
     }
 
@@ -187,17 +156,14 @@ class MainActivity : Activity() {
         startButton = Button(this).apply {
             text = "开始接收"; isAllCaps = false
             setOnClickListener {
-                if (requested) stopReceiver("正在停止…") else {
-                    if (Build.VERSION.SDK_INT >= 37 && checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED) {
-                        requestPermissions(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK), 37)
-                    } else startReceiver()
-                }
+                if (requested) stopReceiver("用户点击停止") else requestReceiverStart()
             }
         }
         connection.addView(startButton)
-        connection.addView(text("接收期间请保持此页面在前台；进入后台或锁屏后停止播放。", 12, subtle))
+        connection.addView(text(getString(R.string.receiver_background_hint), 12, subtle))
 
         val output = card(root, "播放与输出")
+        output.addView(text(getString(R.string.receiver_shared_hint), 12, subtle))
         deviceSpinner = Spinner(this)
         output.addView(deviceSpinner)
         output.addView(text("应用输出采样率", 12, subtle))
@@ -294,7 +260,7 @@ class MainActivity : Activity() {
                     status.text, actual.text, bufferHealth.text, networkStats.text, masterMeter.text,
                     "音源诊断（+${latestNativeAt}ms 采样，仅省略未使用槽位的电平）：\n${compactDiagnostics()}",
                     "最近一次闪断标记：\n$markedDiagnostic",
-                    "最近事件（本次打开应用，重建不清空）：\n${history.text()}", capabilities.text).joinToString("\n\n")
+                    "最近事件（本次进程，后台和页面重建不清空）：\n${history.text()}", capabilities.text).joinToString("\n\n")
                 getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", details))
                 Toast.makeText(this@MainActivity, "诊断信息已复制", Toast.LENGTH_SHORT).show()
             }
@@ -310,32 +276,38 @@ class MainActivity : Activity() {
             return
         }
         preferences.edit().putInt("port", portValue).putInt("buffer", bufferValue).apply()
-        requested = true
-        running = false
-        startButton.text = "停止接收"
-        status.text = "正在启动音频与网络接收…"
-        bufferHealth.text = "等待音源音频…"
-        actual.text = "正在打开音频输出…"
-        networkStats.text = "正在开启新的接收会话"
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        engine.start(PlaybackEngine.Config(portValue, bufferValue, devices.find { it.id == selectedId }, selectedRate, playbackMode), reason = reason)
+        runCatching {
+            startForegroundService(ReceiverService.startIntent(this,
+                ReceiverSettings(portValue, bufferValue, selectedId, selectedRate, playbackMode), reason))
+        }.onFailure { status.text = "后台服务启动失败：${it.message}"; recordEvent(status.text.toString()) }
     }
 
     private fun stopReceiver(message: String) {
         if (requested || running) recordEvent("停止请求：$message")
-        requested = false
-        running = false
-        if (::startButton.isInitialized) startButton.text = "开始接收"
-        if (::status.isInitialized) status.text = message
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        engine.stop()
+        runCatching { startService(Intent(this, ReceiverService::class.java).setAction(ReceiverService.STOP)) }
+            .onFailure { status.text = "停止请求失败：${it.message}" }
+    }
+
+    private fun requestReceiverStart() {
+        if (Build.VERSION.SDK_INT >= 37 && checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK), 37)
+        } else if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !preferences.getBoolean("notification_permission_asked", false)) {
+            preferences.edit().putBoolean("notification_permission_asked", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 33)
+        } else startReceiver()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 37) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && visible) startReceiver()
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && visible) requestReceiverStart()
             else status.text = "请允许本地网络访问，以接收局域网音频"
+        } else if (requestCode == 33 && visible) {
+            if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
+                Toast.makeText(this, "通知未获允许，仍可后台接收；回到应用可停止", Toast.LENGTH_LONG).show()
+            startReceiver()
         }
     }
 
@@ -352,7 +324,7 @@ class MainActivity : Activity() {
         updating = false
         // AudioTrack follows actual same-rate routing. Adding an unrelated
         // output must not tear down UDP and discard all source buffers.
-        if (requested && lostSelection) startReceiver("原首选输出已移除，回到系统默认")
+        // The service handles preferred-device removal even while this screen is hidden.
     }
 
     private fun updateRates() {
@@ -379,11 +351,9 @@ class MainActivity : Activity() {
             val slot = item.optInt("slot", -1)
             if (slot !in 0..15) return@repeat
             seen.add(slot)
-            if (mix.bindTrack(slot, item.optString("source"), item.optLong("stream_id"))) {
+            val viewIdentity = "${item.optString("source")}/${item.optLong("stream_id")}"
+            if (viewIdentities.put(slot, viewIdentity) != viewIdentity) {
                 trackViews.remove(slot)?.let { sources.removeView(it.first.parent as View) }
-                // The receiver gates a new identity with mute until its own
-                // saved tone/solo settings are applied, then restores its mute.
-                applyControl { mix.applyTrack(slot) }
             }
             val views = trackViews.getOrPut(slot) {
                 val card = card(sources, "音源 ${slot + 1}")
@@ -395,19 +365,6 @@ class MainActivity : Activity() {
             }
             views.first.text = "${slot + 1} · ${item.optString("source")} / 流 ${item.optLong("stream_id")} · ${if (item.optBoolean("online")) "在线" else "离线"}"
             val meter = json.optJSONArray("meters")?.optJSONObject(slot)
-            val identity = "${item.optString("source")}/${item.optLong("stream_id")}"
-            val diagnostic = SourceDiagnostic(item.optLong("session_id"), item.optLong("concealed_frames"),
-                item.optLong("late_packets"), item.optLong("queue_overflows"), meter?.optLong("underruns") ?: 0,
-                item.optLong("reset_count"), meter?.optBoolean("primed") == true,
-                item.optLong("gap_filled_packets"))
-            val previous = sourceDiagnostics.put(identity, diagnostic)
-            if (previous == null || previous != diagnostic) {
-                recordEvent("音源 $identity：会话 ${diagnostic.session}，丢帧 ${diagnostic.lost}，迟到 ${diagnostic.late}，" +
-                    "溢出 ${diagnostic.overflow}，缺粮 ${diagnostic.underruns}，重置 ${diagnostic.resets} " +
-                    "(${item.optString("reset_reason")})，补回包 ${diagnostic.gapFilled}，" +
-                    "最近缺口 ${item.optString("last_loss_kind")} / ${item.optLong("last_loss_frames")} 帧，" +
-                    "${if (diagnostic.primed) "播放中" else "缓冲中"}")
-            }
             views.second.text = "来源 ${item.optInt("sample_rate")} Hz · 双声道 PCM float\n" +
                 "数据包 ${item.optLong("packets")} · 丢失帧 ${item.optLong("lost_frames")} · 迟到包 ${item.optLong("late_packets")}\n" +
                 "补回包 ${item.optLong("gap_filled_packets")}（含乱序） · 去重 ${item.optLong("duplicate_packets")}\n" +
@@ -416,11 +373,6 @@ class MainActivity : Activity() {
         }
         trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "此通道暂无音源"; views.second.text = "等待音源连接" }
         emptySources.visibility = if (seen.isEmpty()) View.VISIBLE else View.GONE
-        val activeIdentities = (0 until (tracks?.length() ?: 0)).map { index ->
-            val track = tracks!!.getJSONObject(index)
-            "${track.optString("source")}/${track.optLong("stream_id")}"
-        }.toSet()
-        sourceDiagnostics.keys.retainAll(activeIdentities)
         val stats = json.optJSONObject("stats") ?: JSONObject()
         val meters = json.optJSONArray("meters")
         bufferHealth.text = if (seen.isEmpty()) "等待音源音频…" else seen.sorted().joinToString("\n") { slot ->
@@ -459,6 +411,23 @@ class MainActivity : Activity() {
             "丢帧补偿和重置不会增加缺粮计数；写入耗时也不直接等同于断音。"
         val master = json.optJSONObject("master")
         masterMeter.text = "峰值 ${peak(master?.optDouble("peak") ?: 0.0)} · 触发保护帧数 ${master?.optLong("clipped_frames") ?: 0}"
+    }
+
+    private fun syncReceiver() {
+        if (!visible || !::status.isInitialized || NativeBridge.loadError != null) return
+        status.text = receiver.status
+        actual.text = receiver.actual
+        startButton.text = if (requested) "停止接收" else "开始接收"
+        eventHistory.text = history.text()
+        if (displayedEpoch != receiver.epoch) {
+            displayedEpoch = receiver.epoch
+            trackViews.clear()
+            viewIdentities.clear()
+            sources.removeAllViews()
+            emptySources.visibility = View.VISIBLE
+        }
+        if (running) runCatching { updateTracks(JSONObject(latestNativeDiagnostics)) }
+            .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
     }
 
     private fun compactDiagnostics(): String = runCatching {
