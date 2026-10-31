@@ -110,17 +110,27 @@ impl TrackControls {
     /// that takes place entirely between render calls. Initial activation
     /// preserves the initial prefill.
     pub fn set_active(&self, active: bool) {
-        let _ = self
-            .lifecycle
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |s| {
-                Some(if active {
-                    s | 1
-                } else if s & 1 != 0 {
-                    (s & !1).wrapping_add(2)
-                } else {
-                    s
-                })
-            });
+        // Keep the update atomic with reset(), without depending on the newer
+        // try_update API or the fetch_update name deprecated by newer Rust.
+        let mut state = self.lifecycle.load(Ordering::Acquire);
+        loop {
+            let next = if active {
+                state | 1
+            } else if state & 1 != 0 {
+                (state & !1).wrapping_add(2)
+            } else {
+                state
+            };
+            match self.lifecycle.compare_exchange_weak(
+                state,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(current) => state = current,
+            }
+        }
     }
 
     pub fn active(&self) -> bool {
