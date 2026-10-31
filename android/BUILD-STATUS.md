@@ -1,5 +1,35 @@
 # Verified Android build
 
+## Current build · 2026-11-01
+
+- Package `io.lanmix.receiver`, **0.2.0 / version code 7**, minimum API 26 / target 37.
+- Artifact: `dist/android/LanMix-0.2.0-debug.apk`, **2,826,894 bytes**.
+- SHA-256: `9D92921B25EA2F767973AD37B03F166A76F030C75FC5BCEAE0AF78FD9678871D`.
+- Both ARM JNI libraries rebuilt offline; Kotlin tests, APK assembly and lint passed.
+  **26 Kotlin tests**, no failures/errors; lint **0 errors, 37 warnings**, kept visible.
+- APK v2 signature, 16 KiB ZIP alignment, version, permissions and launcher icon
+  checked. Debug signing certificate SHA-256 remains
+  `d3d92a78d02feadacf7bccbae4bd2e783422c809213d4cd36d6880a5c08657e4`.
+- Rust workspace tests, formatting and strict Clippy passed, including four discovery
+  tests. No DSP, PCM transport or AudioTrack policy change in this iteration.
+- Actual host JVM `-Xcheck:jni` checked all eleven exports: discovery identity/update,
+  actual UDP probe/reply, snapshot, connection request, shutdown, plus the existing
+  audio lifetime, loss repair, controls and supported-rate checks.
+- Real Windows process discovery and bidirectional probe replies passed independently
+  of PCM. Two-source 44.1/96 kHz smoke and deliberate loss/backup tests also passed.
+
+The Activity now has Mixer / Devices / Settings pages and a native floating glass
+navigation bar, with light/dark colors and API-dependent blur/lens fallbacks.
+A process controller keeps discovery alive with either the screen or playback
+service and releases it when neither is active. A pending explicit connection holds
+a bounded twelve-second handoff, covered by four new lifecycle tests. It does not change audio focus,
+background playback ownership or jitter buffer defaults.
+
+**No desktop/phone UI automation or physical Android/Wi-Fi/Bluetooth acceptance was
+performed this iteration.** In particular shader appearance/performance, actual
+button flows on phones, background/lockscreen and multi-app behavior need device
+acceptance. See [UI/discovery design and instructions](../docs/UI-DISCOVERY.md).
+
 ## 0.1.5 background ownership and shared playback · 2026-10-31
 
 - Package `io.lanmix.receiver`, **0.1.5 / version code 6**, minimum API 26 / target 37.

@@ -8,6 +8,7 @@ members = [
     "crates/lanmix-sender",
     "crates/lanmix-receiver",
     "crates/lanmix-android",
+    "crates/lanmix-discovery",
 ]
 default-members = ["crates/lanmix-sender", "crates/lanmix-receiver"]
 exclude = ["vendor/cpal"]
@@ -32,6 +33,7 @@ lanmix-proto = { path = "crates/lanmix-proto" }
 lanmix-core = { path = "crates/lanmix-core" }
 lanmix-network = { path = "crates/lanmix-network" }
 lanmix-audio = { path = "crates/lanmix-audio" }
+lanmix-discovery = { path = "crates/lanmix-discovery" }
 
 [profile.release]
 lto = "thin"

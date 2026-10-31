@@ -16,6 +16,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+mod gui;
 mod redundancy;
 use redundancy::Redundancy;
 
@@ -31,11 +33,20 @@ struct CapturedFrame {
 )]
 struct Args {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Open the small native Windows sender window (also the default on Windows).
+    Gui,
+    /// Print discovered LAN devices as JSON.
+    Discover {
+        #[arg(long, default_value_t = 3)]
+        seconds: u64,
+        #[arg(long)]
+        probe: Option<SocketAddr>,
+    },
     /// List output endpoints (Windows loopback) and capture inputs.
     Devices,
     /// Capture system audio (Windows default) or an explicitly selected input/monitor.
@@ -80,8 +91,29 @@ enum Command {
 fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
-        Command::Devices => list_devices(),
-        Command::Send {
+        None | Some(Command::Gui) => {
+            #[cfg(windows)]
+            {
+                gui::run()
+            }
+            #[cfg(not(windows))]
+            {
+                bail!(
+                    "the native sender window is currently Windows-only; use send/devices/discover"
+                )
+            }
+        }
+        Some(Command::Discover { seconds, probe }) => {
+            let discovery = lanmix_discovery::Discovery::start(sender_identity(false)?)?;
+            if let Some(address) = probe {
+                discovery.probe(address)?;
+            }
+            thread::sleep(Duration::from_secs(seconds.min(60)));
+            println!("{}", serde_json::to_string_pretty(&discovery.snapshot())?);
+            Ok(())
+        }
+        Some(Command::Devices) => list_devices(),
+        Some(Command::Send {
             to,
             output,
             input,
@@ -89,16 +121,52 @@ fn main() -> Result<()> {
             packet_ms,
             repair_ms,
             seconds,
-        } => send(to, output, input, stream_id, packet_ms, repair_ms, seconds),
-        Command::Tone {
+        }) => {
+            let _presence = presence();
+            send(
+                CaptureOptions {
+                    to,
+                    output,
+                    input,
+                    stream_id,
+                    packet_ms,
+                    repair_ms,
+                    seconds,
+                },
+                stop_flag()?,
+            )
+        }
+        Some(Command::Tone {
             to,
             frequency,
             sample_rate,
             stream_id,
             repair_ms,
             seconds,
-        } => tone(to, frequency, sample_rate, stream_id, repair_ms, seconds),
+        }) => {
+            let _presence = presence();
+            tone(to, frequency, sample_rate, stream_id, repair_ms, seconds)
+        }
     }
+}
+
+fn sender_identity(ready: bool) -> Result<lanmix_discovery::Identity> {
+    let name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "LanMix PC".into());
+    let mut identity = lanmix_discovery::Identity::new(
+        name,
+        lanmix_discovery::Role::Sender,
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    identity.ready = ready;
+    Ok(identity)
+}
+fn presence() -> Option<lanmix_discovery::Discovery> {
+    sender_identity(false)
+        .and_then(lanmix_discovery::Discovery::start)
+        .map_err(|e| eprintln!("Automatic discovery unavailable (audio can continue): {e:#}"))
+        .ok()
 }
 
 fn list_devices() -> Result<()> {
@@ -149,7 +217,8 @@ fn socket(to: SocketAddr) -> Result<UdpSocket> {
     Ok(socket)
 }
 
-fn send(
+#[derive(Clone)]
+struct CaptureOptions {
     to: SocketAddr,
     output: Option<usize>,
     input: Option<usize>,
@@ -157,7 +226,17 @@ fn send(
     packet_ms: f32,
     repair_ms: u32,
     seconds: u64,
-) -> Result<()> {
+}
+fn send(options: CaptureOptions, running: Arc<AtomicBool>) -> Result<()> {
+    let CaptureOptions {
+        to,
+        output,
+        input,
+        stream_id,
+        packet_ms,
+        repair_ms,
+        seconds,
+    } = options;
     ensure!(
         packet_ms.is_finite() && (0.5..=10.0).contains(&packet_ms),
         "packet-ms must be 0.5..10"
@@ -225,7 +304,6 @@ fn send(
         _ => bail!("capture format {format:?} not supported yet"),
     };
     let socket = socket(to)?;
-    let running = stop_flag()?;
     stream.play()?;
     let mut packet = [0u8; MAX_DATAGRAM_BYTES];
     let mut frames = [[0.0; 2]; (MAX_DATAGRAM_BYTES - 40) / 8];

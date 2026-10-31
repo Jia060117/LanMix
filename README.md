@@ -16,14 +16,18 @@
 - 每路音量、静音、独听、平衡、EQ 预放大和 10 段 EQ；总音量和总 EQ。
 - 桌面接收端图形界面、输出选择、系统默认输出跟随、系统报告的格式列表、应用打开的流格式、电平表。
 - 设置保存在当前用户的配置目录，手动保存或退出时保存。
-- Android 原生接收端：输出设备/格式查询、实际 AudioTrack 路由、音量与 EQ，详见 [android/README.md](android/README.md)。
+- Android 原生接收端：三页界面、悬浮玻璃底栏、浅色/深色、独立音量与 EQ、设备能力与实际输出查询。
+- Windows 纯 Rust 原生发送窗口，双击 `lanmix.exe` 即可操作；命令行和 Rust/egui 桌面混音接收端继续提供。
+- 发送端与接收端双向局域网自动发现、点击连接、按 IP 手动查找；发现与 PCM 音频使用独立线程和端口。
 
-**Android 0.1.5：** UDP、来源设置和 PCM 输出交由前台服务管理，切换应用、
-锁屏和页面重建不再主动停止接收。取消主动申请音频焦点，使用共享 PCM 混音，
-便于和手机上的音乐/视频同时出声；普通服务通知提供停止入口，不接管媒体控制。
-后台新来源也会应用自己的音量、静音和 EQ。服务由用户手动开始，停止后释放资源；
-系统强制终止不会自动重启。Windows 发送端继续使用 0.1.4。
-功能边界和真机验证步骤见 [后台播放说明](docs/ANDROID-BACKGROUND.md)。
+**当前界面版本 0.2.0：** Android 在“混音 / 设备 / 设置”中管理音源、连接和输出，
+底栏按系统能力提供背景模糊与边缘折射。Windows 原生发送窗口约 1.2 MB，
+不依赖 WebView。两端启动后可自动发现，接收端可以请求空闲的电脑开始发送；
+电脑也可以主动连接已启动的接收端。详见 [界面与连接说明](docs/UI-DISCOVERY.md)。
+
+Android 音频、网络和来源设置由前台播放服务管理，支持页面隐藏后的持续接收。
+应用不主动申请音频焦点，保留共享 PCM 输出和普通服务通知。
+[后台播放说明](docs/ANDROID-BACKGROUND.md) 中列出了行为边界和真机验证步骤。
 
 **Android / Windows 工具 0.1.4：** 针对“缺粮为零但时间线缺帧”的闪断，
 发送端默认在约 20 ms 后发送一份原样备份，接收端重排和去重。
@@ -41,7 +45,11 @@ cargo build --release -p lanmix-sender -p lanmix-receiver
 .\target\release\lanmix-receiver.exe
 ```
 
-在接收端点击 **Start receiver**。默认监听 UDP `46210`，新安装的图形接收端默认初始缓冲 150ms，已有设置保留。输出采用设备默认采样率；可以选择设备和工作采样率，点击 **Apply / restart** 应用。
+Windows 双击 **`lanmix.exe`** 打开发送窗口；在手机“设备”中选择电脑并连接，
+或先在接收设备点击 **开始接收**，再从电脑选择接收设备。Android 安装包与
+`lanmix.exe` 需一起更新到 0.2.0 才能使用自动发现；旧版仍可按 IP 发送。
+
+桌面混音接收端同样点击 **开始接收**。默认监听 UDP `46210`，新安装的图形接收端默认初始缓冲 150ms，已有设置保留。输出采用设备默认采样率；可以选择设备和工作采样率，点击 **应用并重启** 生效。
 
 **0.1.1 连续播放修复：** 每路缺粮后自动扩大缓冲目标，最高 400ms；缺包等待时间随缓冲调整，避免过早把迟到的音频替换成静音。界面显示实际缓冲、目标值和缺粮次数。升级后建议先把初始缓冲改为 **150ms** 再启动，详见 [断音诊断与验证](docs/AUDIO-DROPOUTS.md)。这会增加缓冲时间，优先保证连续播放。
 
@@ -92,7 +100,7 @@ cargo build --release -p lanmix-sender -p lanmix-receiver
 | macOS | 桌面接收架构可移植；系统声音采集的 Core Audio taps/ScreenCaptureKit 后端尚未实现 |
 | iOS/iPadOS | 尚未提供应用外壳；共享 Rust 核心不等于已完成 iOS 产品 |
 
-目前通过 IP 直接连接，设备显示为来源 IP 与 stream-id；Android 已提供手动启动的后台播放服务，桌面端尚无后台服务/托盘和开机自启。不含自动发现、配对和加密。协议 v1 面向可信局域网。这些产品能力不会以未生效的按钮冒充实现。
+当前已支持 IPv4 局域网自动发现和点击连接，同时保留 IP 直连。发现默认使用 UDP 46211，音频默认使用 UDP 46210；设备列表会移除离线设备。Android 已提供手动启动的后台播放服务，桌面端尚无托盘和开机自启。尚未提供配对和加密，发现与协议 v1 面向可信局域网。
 
 ## 检查与构建
 
@@ -103,6 +111,7 @@ cargo test --manifest-path vendor/cpal/Cargo.toml --lib
 cargo clippy --workspace --all-targets -- -D warnings
 python scripts/smoke_test.py --bin-dir target/release
 python scripts/test_redundancy.py --bin-dir target/release
+python scripts/test_discovery.py --bin-dir target/release
 powershell -ExecutionPolicy Bypass -File scripts/build-desktop.ps1
 ```
 

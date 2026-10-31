@@ -17,4 +17,9 @@ object NativeBridge {
     external fun nativeSetTrack(index: Int, gainDb: Float, mute: Boolean, solo: Boolean,
         eqEnabled: Boolean, preampDb: Float, bands: FloatArray)
     external fun nativeSetMaster(gainDb: Float, eqEnabled: Boolean, preampDb: Float, bands: FloatArray)
+    external fun nativeDiscoveryUpdate(identity: String)
+    external fun nativeDiscoverySnapshot(): String
+    external fun nativeDiscoveryConnect(id: String)
+    external fun nativeDiscoveryProbe(address: String)
+    external fun nativeDiscoveryStop()
 }

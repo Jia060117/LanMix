@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use jni::{
     JNIEnv,
-    objects::{JFloatArray, JObject},
+    objects::{JFloatArray, JObject, JString},
     sys::{jboolean, jfloat, jint, jstring},
 };
 use lanmix_core::Mixer;
@@ -19,6 +19,7 @@ use std::{
 };
 
 const MAX_FRAMES: usize = 4096;
+static DISCOVERY: Mutex<Option<lanmix_discovery::Discovery>> = Mutex::new(None);
 static RECEIVER: Mutex<Option<Receiver>> = Mutex::new(None);
 // First fill consumes this startup handoff. UI methods never touch it;
 // subsequent fills use a worker-owned mixer without any global render lock.
@@ -318,6 +319,93 @@ pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeSetMaster(
 ) {
     boundary(&mut env, |env| {
         set_master(gain, enabled != 0, preamp, read_bands(env, &array)?)
+    });
+}
+
+/// Discovery has its own worker/lock and never shares the PCM lifecycle mutex.
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryUpdate(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    json: JString<'_>,
+) {
+    boundary(&mut env, |env| {
+        let json: String = env.get_string(&json)?.into();
+        let identity: lanmix_discovery::Identity = serde_json::from_str(&json)?;
+        let mut discovery = DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?;
+        if let Some(active) = discovery.as_ref() {
+            active.update(identity)?;
+        } else {
+            *discovery = Some(lanmix_discovery::Discovery::start(identity)?);
+        }
+        Ok(())
+    });
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoverySnapshot(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+) -> jstring {
+    boundary(&mut env, |env| {
+        let discovery = DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?;
+        let snapshot = discovery.as_ref().map(|d| d.snapshot()).unwrap_or_default();
+        Ok(env
+            .new_string(serde_json::to_string(&snapshot)?)?
+            .into_raw())
+    })
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryConnect(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    id: JString<'_>,
+) {
+    boundary(&mut env, |env| {
+        let id: String = env.get_string(&id)?.into();
+        DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?
+            .as_ref()
+            .context("discovery is stopped")?
+            .connect(&id)
+    });
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryProbe(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    address: JString<'_>,
+) {
+    boundary(&mut env, |env| {
+        let address: String = env.get_string(&address)?.into();
+        DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?
+            .as_ref()
+            .context("discovery is stopped")?
+            .probe(address.parse()?)
+    });
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryStop(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+) {
+    boundary(&mut env, |_| {
+        DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?
+            .take();
+        Ok(())
     });
 }
 

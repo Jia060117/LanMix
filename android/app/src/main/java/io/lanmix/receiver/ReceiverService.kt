@@ -129,6 +129,7 @@ class ReceiverService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
         if (intent?.action == STOP) {
+            (application as LanMixApplication).discovery.cancelPending()
             state.requested = false
             state.running = false
             state.status = "正在停止接收…"
@@ -178,6 +179,7 @@ class ReceiverService : Service() {
     }
 
     private fun begin(settings: ReceiverSettings, reason: String) {
+        (application as LanMixApplication).discovery.service(true)
         state.config = settings
         state.requested = true
         state.running = false
@@ -220,6 +222,7 @@ class ReceiverService : Service() {
     }
 
     private fun finishReceiving() {
+        (application as LanMixApplication).discovery.service(false)
         handler.removeCallbacks(poll)
         state.mix.save()
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -241,6 +244,7 @@ class ReceiverService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        (application as LanMixApplication).discovery.service(false)
         handler.removeCallbacksAndMessages(null)
         manager.unregisterAudioDeviceCallback(devices)
         engine.close()

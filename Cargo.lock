@@ -1165,6 +1165,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1308,6 +1318,7 @@ dependencies = [
  "anyhow",
  "jni 0.21.1",
  "lanmix-core",
+ "lanmix-discovery",
  "lanmix-network",
  "serde_json",
 ]
@@ -1331,6 +1342,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lanmix-discovery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "getrandom 0.3.4",
+ "if-addrs",
+ "serde",
+ "serde_json",
+ "socket2",
+]
+
+[[package]]
 name = "lanmix-network"
 version = "0.1.1"
 dependencies = [
@@ -1348,13 +1371,14 @@ version = "0.1.0"
 
 [[package]]
 name = "lanmix-receiver"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
  "eframe",
  "lanmix-audio",
  "lanmix-core",
+ "lanmix-discovery",
  "lanmix-network",
  "serde",
  "serde_json",
@@ -1362,15 +1386,18 @@ dependencies = [
 
 [[package]]
 name = "lanmix-sender"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
  "cpal",
  "ctrlc",
  "lanmix-audio",
+ "lanmix-discovery",
  "lanmix-proto",
  "rtrb",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

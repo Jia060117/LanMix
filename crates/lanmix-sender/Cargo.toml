@@ -1,8 +1,9 @@
 [package]
 name = "lanmix-sender"
-version = "0.1.4"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
+default-run = "lanmix-sender"
 
 [dependencies]
 anyhow.workspace = true
@@ -12,4 +13,9 @@ ctrlc.workspace = true
 lanmix-proto.workspace = true
 lanmix-audio.workspace = true
 rtrb.workspace = true
+lanmix-discovery.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse"] }
 

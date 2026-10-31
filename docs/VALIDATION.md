@@ -1,6 +1,18 @@
-# LanMix 0.1 验证记录
+# LanMix 验证记录
 
-日期：2026-10-31。环境：Windows x64，Rust/Cargo 1.97.1。
+当前验证日期：2026-11-01。环境：Windows x64，Rust/Cargo 1.97.1。
+
+0.2.0：Rust 工作区 56 次测试执行通过（53 个不同用例；同一组 3 项备份测试分别
+在图形入口和 CLI 入口执行），包括 4 个新发现协议/生命周期测试。Kotlin 26 项、
+格式、严格 Clippy、ARM 双 ABI、Android 编译与 lint 通过（0 errors / 37 warnings）。
+实际 JNI 验证全部 11 个导出函数，包括 UDP 发现/连接；真实 Windows 进程的
+双向发现与音频端口隔离检查通过。两路 44.1/96 kHz 音频混音通过；两次 6 ms
+丢包的补偿帧仍为关闭备份 576、开启备份 0。Windows 图形发送入口约 1.2 MB，
+PE 子系统为 GUI，CLI 入口为 console，均内嵌 Common Controls v6 清单。
+本轮没有再次控制桌面窗口或手机，UI 外观/点击流程及实体 Wi-Fi 联机需要用户
+验收。详见 [界面与发现](UI-DISCOVERY.md) 和 [APK 检查](../android/BUILD-STATUS.md)。
+
+以下为此前的验证记录。
 
 Android 0.1.5 将音频、UDP、来源控制和诊断移至前台服务，取消音频焦点请求。
 新增 4 项后台来源控制测试，连同原有 18 项 Kotlin 测试通过；Android 编译和 lint

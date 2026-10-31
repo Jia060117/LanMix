@@ -17,6 +17,48 @@ public final class NativeBridge {
     public native void nativeSetTrack(int index, float gain, boolean mute, boolean solo,
         boolean enabled, float preamp, float[] bands);
     public native void nativeSetMaster(float gain, boolean enabled, float preamp, float[] bands);
+    public native void nativeDiscoveryUpdate(String identity);
+    public native String nativeDiscoverySnapshot();
+    public native void nativeDiscoveryConnect(String id);
+    public native void nativeDiscoveryProbe(String address);
+    public native void nativeDiscoveryStop();
+
+    static void discovery(NativeBridge bridge) throws Exception {
+        String receiverId = "11111111111111111111111111111111";
+        String senderId = "22222222222222222222222222222222";
+        String identity = "{\"id\":\"" + receiverId + "\",\"name\":\"JNI receiver\",\"role\":\"receiver\","
+            + "\"audio_port\":46210,\"ready\":true,\"version\":\"test\"}";
+        String hello = "{\"magic\":\"LMXD\",\"protocol\":1,\"kind\":\"hello\",\"peer\":{\"id\":\"" + senderId
+            + "\",\"name\":\"JNI sender\",\"role\":\"sender\",\"audio_port\":0,\"ready\":true,\"version\":\"test\"}}";
+        rejected(() -> bridge.nativeDiscoveryUpdate("{}"));
+        bridge.nativeDiscoveryUpdate(identity);
+        try (DatagramSocket socket = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+            socket.setSoTimeout(2000);
+            rejected(() -> bridge.nativeDiscoveryProbe("not-an-ip"));
+            bridge.nativeDiscoveryProbe("127.0.0.1:" + socket.getLocalPort());
+            DatagramPacket incoming = new DatagramPacket(new byte[2048], 2048);
+            socket.receive(incoming);
+            String probe = new String(incoming.getData(), 0, incoming.getLength(), java.nio.charset.StandardCharsets.UTF_8);
+            require(probe.contains("\"kind\":\"probe\"") && probe.contains(receiverId), "JNI direct discovery probe");
+            byte[] bytes = hello.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (!bridge.nativeDiscoverySnapshot().contains(senderId)) {
+                require(System.nanoTime() < deadline, "JNI discovery peer timeout"); Thread.sleep(20);
+            }
+            bridge.nativeDiscoveryUpdate(identity); // update the live worker, no restart
+            bridge.nativeDiscoveryConnect(senderId);
+            boolean connected = false;
+            while (!connected && System.nanoTime() < deadline) {
+                incoming.setLength(2048); socket.receive(incoming);
+                String message = new String(incoming.getData(), 0, incoming.getLength(), java.nio.charset.StandardCharsets.UTF_8);
+                connected = message.contains("\"kind\":\"connect\"") && message.contains("\"target\":\"" + senderId + "\"");
+            }
+            require(connected, "JNI receiver-to-sender connect request");
+        } finally { bridge.nativeDiscoveryStop(); }
+        require(bridge.nativeDiscoverySnapshot().contains("\"peers\":[]"), "discovery worker released");
+        System.out.println("JNI discovery: identity/update, actual UDP probe/reply, snapshot, connect and stop passed");
+    }
 
     static void require(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
@@ -43,6 +85,7 @@ public final class NativeBridge {
     public static void main(String[] args) throws Exception {
         System.load(args[0]);
         NativeBridge bridge = new NativeBridge();
+        discovery(bridge);
         bridge.nativeStop(); bridge.nativeStop();
         require(bridge.nativeTracks().contains("\"running\":false"), "stopped JSON");
         rejected(() -> bridge.nativeStart(0, 60, 48000));
@@ -187,6 +230,6 @@ public final class NativeBridge {
                 require(Arrays.equals(block, new float[block.length]), "10 ms fill at " + rate);
             } finally { bridge.nativeStop(); }
         }
-        System.out.println("JNI lifecycle, array validation, JSON, all six exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
+        System.out.println("JNI lifecycle, array validation, JSON, all eleven exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
     }
 }

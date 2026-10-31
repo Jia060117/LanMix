@@ -1,6 +1,6 @@
 # LanMix native Android receiver
 
-Current Android package: **0.1.5 / version code 6**. Pair with the 0.1.4 Windows
+Current Android package: **0.2.0 / version code 7**. Pair with the 0.2.0 Windows
 sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
@@ -30,6 +30,23 @@ standard Gradle wrapper for machines without a cached distribution. `ANDROID_HOM
 and, optionally, `JAVA_HOME` select local installations. Required Rust targets
 must already be installed. The script does not install or launch devices.
 
+## Interface and device discovery
+
+The Activity has Mixer / Devices / Settings pages, follows system light/dark mode,
+and uses an independently implemented native floating glass bar. Android 13+ tries
+an AGSL edge lens over background blur, Android 12 uses blur, and older devices
+use a translucent gradient. Shader creation failure falls back to blur.
+Per-source volume/EQ, actual output, capability reports, service ownership and
+copyable diagnostics remain available. See [UI and connection guide](../docs/UI-DISCOVERY.md).
+
+Open `lanmix.exe` on Windows, then choose that PC on the Android Devices page.
+The receiver starts locally and requests streaming only after its PCM output is
+ready. Alternatively start reception first, then choose the phone from Windows.
+Discovery uses its own Rust worker and UDP 46211 plus a dynamic control port;
+PCM still uses UDP 46210 by default. Devices expire after seven seconds without
+announcements. The discovery worker remains alive with the service or visible
+Activity, then stops when neither owns it. No multicast lock is required.
+
 ## Receive audio
 
 Open the Activity, allow local network access on Android 17+, and press 开始接收.
@@ -38,8 +55,8 @@ initial network jitter buffer **150 ms** for new installs (adjustable 20–200 m
 Existing saved values are retained; after upgrading, start with 150 ms for
 Wi-Fi if a smaller setting was previously used. Each starving source increases
 its own target up to 400 ms until a session/rate reset. Source buffer occupancy,
-adaptive target, and underrun count appear near the receiver controls and in
-each source card. These source underruns are separate from AudioTrack underruns.
+adaptive target, and underrun count appear in Settings diagnostics and each
+source card’s expandable status. These source underruns are separate from AudioTrack underruns.
 INTERNET is declared;
 target API 37 also uses ACCESS_LOCAL_NETWORK and requests its runtime grant.
 There is no microphone, AudioRecord, multicast permission, or multicast lock.

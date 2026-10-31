@@ -6,6 +6,7 @@ import android.os.SystemClock
 /** Process-owned UI state. Audio and sockets belong exclusively to ReceiverService. */
 class LanMixApplication : Application() {
     val receiver by lazy { ReceiverState(MixState(getSharedPreferences("lanmix", MODE_PRIVATE))) }
+    val discovery by lazy { DiscoveryController(this, receiver) }
 }
 
 class ReceiverState(val mix: MixState) {
