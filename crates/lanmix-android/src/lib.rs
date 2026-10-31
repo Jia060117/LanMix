@@ -128,7 +128,7 @@ fn fill(length: usize, copy: impl FnOnce(&[f32]) -> Result<()>) -> Result<()> {
         render.mixer.render(&mut render.frames[..length / 2]);
         for (frame, output) in render.frames[..length / 2]
             .iter()
-            .zip(render.interleaved[..length].chunks_exact_mut(2))
+            .zip(render.interleaved[..length].as_chunks_mut::<2>().0)
         {
             output.copy_from_slice(frame);
         }

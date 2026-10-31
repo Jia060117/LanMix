@@ -44,7 +44,9 @@ impl Packet<'_> {
     /// public header after decoding cannot change its bounds.
     pub fn frames(&self) -> impl ExactSizeIterator<Item = StereoFrame> + '_ {
         self.payload
-            .chunks_exact(STEREO_FRAME_BYTES)
+            .as_chunks::<STEREO_FRAME_BYTES>()
+            .0
+            .iter()
             .map(read_frame)
     }
 }
@@ -169,10 +171,11 @@ pub fn encode(
     out[34] = 2;
     out[35] = 1;
     out[36..40].fill(0);
-    for (frame, bytes) in frames
-        .iter()
-        .zip(out[HEADER_BYTES..required].chunks_exact_mut(8))
-    {
+    for (frame, bytes) in frames.iter().zip(
+        out[HEADER_BYTES..required]
+            .as_chunks_mut::<STEREO_FRAME_BYTES>()
+            .0,
+    ) {
         bytes[..4].copy_from_slice(&frame[0].to_le_bytes());
         bytes[4..].copy_from_slice(&frame[1].to_le_bytes());
     }
@@ -272,7 +275,7 @@ fn validate_frames(frames: impl Iterator<Item = StereoFrame>) -> Result<(), Prot
     Ok(())
 }
 
-fn read_frame(bytes: &[u8]) -> StereoFrame {
+fn read_frame(bytes: &[u8; STEREO_FRAME_BYTES]) -> StereoFrame {
     [
         f32::from_bits(read_u32(bytes, 0)),
         f32::from_bits(read_u32(bytes, 4)),
