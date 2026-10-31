@@ -2,6 +2,18 @@
 
 当前验证日期：2026-11-01。环境：Windows x64，Rust/Cargo 1.97.1。
 
+Android 0.2.1：读取用户 Android 17 / API 37 手机的实际崩溃栈，确认 0.2.0 在
+窗口 decor 创建前访问 `Window.insetsController`，于 `PhoneWindow` 内部空指针崩溃。
+现改为构建完整内容、调用 `setContentView` 后再设置系统栏样式。通过 ADB 覆盖安装
+成功，实际冷启动返回 `Status: ok`（700 ms），同一进程数分钟后仍存活并处于前台，
+该进程无新增崩溃记录。双 ARM 音频核心与 0.2.0 逐字节一致，签名一致，16 KiB
+ZIP 对齐通过；Windows 保持 0.2.0。这次未重新验收声音、后台锁屏或蓝牙听感。
+Kotlin 共 29 项测试通过，新增 Robolectric API 28 / 32 / 35 的实际 Activity 启动、
+软件画布绘制、三页切换与重建检查。将 Activity 临时替换回 0.2.0 做反向验证，
+API 32 / 35 均出现与真机相同的空指针；恢复修复后通过。Android 编译与 lint
+通过（0 errors / 37 warnings）。硬件玻璃绘制由本次真机启动覆盖，不将软件画布
+测试描述为 GPU 驱动兼容性验证。
+
 0.2.0：Rust 工作区 56 次测试执行通过（53 个不同用例；同一组 3 项备份测试分别
 在图形入口和 CLI 入口执行），包括 4 个新发现协议/生命周期测试。Kotlin 26 项、
 格式、严格 Clippy、ARM 双 ABI、Android 编译与 lint 通过（0 errors / 37 warnings）。

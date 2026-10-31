@@ -1,6 +1,6 @@
 # LanMix native Android receiver
 
-Current Android package: **0.2.0 / version code 7**. Pair with the 0.2.0 Windows
+Current Android package: **0.2.1 / version code 8**. Pair with the 0.2.0 Windows
 sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
@@ -11,6 +11,10 @@ capabilities and omits unused meter slots. See
 
 Native Kotlin Activity and playback foreground service, no external UI libraries,
 minimum Android 8 / API 26.
+0.2.1 fixes a startup NPE in 0.2.0: system-bar appearance is now set only after
+the complete content view creates the window decor. Confirmed by the Android 17
+device crash stack and an in-place update/cold launch. Audio JNI libraries are
+byte-identical to 0.2.0.
 Build and target API 37, the newest stable platform installed on this host (its
 `source.properties` reports Android 17, preview SDK 0, no beta codename). Android
 Gradle plugin 9.3.2 includes Kotlin support; cached Gradle 9.6.1 and Android
@@ -24,6 +28,10 @@ linkers, stages the libraries, and runs `testDebugUnitTest assembleDebug lintDeb
 manifest changes or Gradle installation are required. `-Offline` uses cached
 dependencies; `-SkipNative` reuses previously staged libraries. Gradle's preBuild
 fails if either native library is absent, preventing UI-only APKs.
+
+Activity startup tests use Robolectric 4.17 with Android resources. The first test
+run also downloads its Android runtime jars into the local Maven cache; Gradle's
+`--offline` alone does not prevent Robolectric's separate runtime downloads.
 
 The output is `app/build/outputs/apk/debug/app-debug.apk`. The project also has a
 standard Gradle wrapper for machines without a cached distribution. `ANDROID_HOME`

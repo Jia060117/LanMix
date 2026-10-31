@@ -9,8 +9,8 @@ android {
         applicationId = "io.lanmix.receiver"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "0.2.0"
+        versionCode = 8
+        versionName = "0.2.1"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {
@@ -18,6 +18,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildTypes { release { isMinifyEnabled = false } }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 // Never silently package a UI-only APK. build.ps1 cross-compiles JNI first.
@@ -34,4 +35,5 @@ tasks.named("preBuild") { dependsOn(verifyNativeLibraries) }
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
 }

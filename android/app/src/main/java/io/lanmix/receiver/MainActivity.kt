@@ -152,9 +152,6 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
         @Suppress("DEPRECATION")
         run { window.statusBarColor = Color.TRANSPARENT; window.navigationBarColor = Color.TRANSPARENT }
-        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.setSystemBarsAppearance(
-            if (dark) 0 else android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         val shell = FrameLayout(this).apply { setBackgroundColor(this@MainActivity.background) }
         pageHost = FrameLayout(this); shell.addView(pageHost, FrameLayout.LayoutParams(-1, -1))
         fun page(title: String, subtitle: String): LinearLayout {
@@ -193,7 +190,6 @@ class MainActivity : Activity() {
                 navigation.layoutParams = this
             }; insets
         }
-        setContentView(shell); showPage(currentPage, false)
         val connection = card(home, "声音入口")
         status = text("准备就绪", 15, accent, true); connection.addView(status)
         connection.addView(text("${localAddresses()} · UDP ${preferences.getInt("port", 46210)}", 12, subtle).apply { setTextIsSelectable(true) })
@@ -280,7 +276,14 @@ class MainActivity : Activity() {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", report))
             Toast.makeText(this, "诊断信息已复制", Toast.LENGTH_SHORT).show()
         })
-        settings.addView(text("LanMix 0.2.0  ·  正在施工中\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
+        settings.addView(text("LanMix 0.2.1  ·  正在施工中\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
+        // PhoneWindow.getInsetsController() dereferences its decor, even when the
+        // Kotlin call uses ?. Install the complete content before accessing it.
+        setContentView(shell)
+        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.setSystemBarsAppearance(
+            if (dark) 0 else android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        showPage(currentPage, false)
     }
     private fun showPage(index: Int, animate: Boolean = true) {
         currentPage = index.coerceIn(0, 2)

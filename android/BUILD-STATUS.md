@@ -2,6 +2,33 @@
 
 ## Current build · 2026-11-01
 
+- Package `io.lanmix.receiver`, **0.2.1 / version code 8**, minimum API 26 / target 37.
+- Artifact: `dist/android/LanMix-0.2.1-debug.apk`, **2,303,565 bytes**.
+- SHA-256: `943AB30D3D0FA738F812C4467071C29EF6AE33B87D1CC3EA6D21AAFFE109DF95`.
+- User's Android 17 / API 37 crash log identifies a `NullPointerException` inside
+  `PhoneWindow.getInsetsController`, called by `MainActivity.createUi` before
+  content/decor creation. The nullable Kotlin call did not protect the getter's
+  internal dereference. Complete the controls and install content first, then set
+  system-bar appearance and initial page selection.
+- Installed with `adb install -r` on the connected Android 17 phone: **Success**.
+  `am start -W` reported **Status: ok / COLD**, total time 700 ms. The same app
+  process remained alive and resumed several minutes later, with no crash entries
+  for that process. No root, data clearing, or permission changes used.
+- ARM64 and ARMv7 native libraries are byte-identical to 0.2.0. APK signature
+  matches the existing debug certificate; 16 KiB ZIP alignment passed.
+- **29 Kotlin tests** passed, including actual Activity creation, software-canvas
+  drawing, all three tabs and recreation under Robolectric API 28 / 32 / 35.
+  A negative check using the original 0.2.0 Activity fails on API 32 and 35 with
+  the same `PhoneWindow.getInsetsController` NPE, and passes after restoring the
+  fix. API 28 never enters the affected API-30+ system-bar branch.
+- APK assembly and lint passed: **0 errors / 37 warnings**. These runtime tests
+  use test-only Robolectric dependencies; the APK adds no UI/runtime dependency.
+
+This establishes startup on the connected phone, not a new audio-quality,
+background, Wi-Fi or Bluetooth acceptance test.
+
+## 0.2.0 UI/discovery build · 2026-11-01
+
 - Package `io.lanmix.receiver`, **0.2.0 / version code 7**, minimum API 26 / target 37.
 - Artifact: `dist/android/LanMix-0.2.0-debug.apk`, **2,826,894 bytes**.
 - SHA-256: `9D92921B25EA2F767973AD37B03F166A76F030C75FC5BCEAE0AF78FD9678871D`.
