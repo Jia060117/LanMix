@@ -494,7 +494,7 @@ impl eframe::App for App {
                             });
                             meter(ui, control.peak());
                             equalizer(ui, "eq", mix, self.engine.as_ref().unwrap().rate);
-                            ui.small(format!("Packets {} · missing {} frames · late/duplicate {} · overflow {} · underruns {}", track.packets, track.lost_frames, track.late_packets, track.queue_overflows, control.underruns()));
+                            ui.small(format!("Packets {} · missing {} frames · late {} · duplicates {} · gap-filled {} · overflow {} · underruns {}", track.packets, track.lost_frames, track.late_packets, track.delivery.duplicate_packets, track.delivery.gap_filled_packets, track.queue_overflows, control.underruns()));
                             ui.small(format!("Buffer {:.1} / target {} ms · {} · clock {:+.0} ppm",
                                 control.buffered_frames() as f64 * 1000.0 / track.sample_rate as f64,
                                 control.target_buffer_ms(), if control.primed() { "playing" } else { "buffering" }, control.drift_ppm()));

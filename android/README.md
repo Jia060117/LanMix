@@ -1,5 +1,14 @@
 # LanMix native Android receiver
 
+Current Android package: **0.1.4 / version code 5**. Pair with the 0.1.4 Windows
+sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
+Retain a 150 ms network buffer during investigation. New source diagnostics
+classify sender timeline gaps versus unreceived sequences (including send errors),
+count gap fillers/duplicates, and show the latest loss age. Cumulative evidence
+survives source resets. Clipboard output puts source/marker/history before device
+capabilities and omits unused meter slots. See
+[diagnostic interpretation and recovery limits](../docs/PLAYBACK-DROPOUTS.md).
+
 Native Kotlin Activity, no external UI libraries, minimum Android 8 / API 26.
 Build and target API 37, the newest stable platform installed on this host (its
 `source.properties` reports Android 17, preview SDK 0, no beta codename). Android
@@ -104,7 +113,8 @@ and near-silence episodes of at least 2 ms observed before AudioTrack writes.
 PCM silence also includes natural silence, mute and startup, so it is not an error
 verdict. Numeric writer metrics include render/write/fill-gap maxima, zero writes,
 and silence totals for the latest reporting window; string formatting runs on the
-UI handler. Raw native JSON and its sample time are included when copying.
+UI handler. Native JSON and its sample time are included when copying; 0.1.4
+omits only unused meter slots and puts device capabilities last.
 See [dropout investigation](../docs/PLAYBACK-DROPOUTS.md).
 
 `NativeBridge` (`io.lanmix.receiver`) loads `liblanmix_android.so` and exposes:

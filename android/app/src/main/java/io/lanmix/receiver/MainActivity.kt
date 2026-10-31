@@ -68,7 +68,8 @@ class MainActivity : Activity() {
     private var latestNativeAt = 0L
     private var markedDiagnostic = "尚未标记闪断"
     private data class SourceDiagnostic(val session: Long, val lost: Long, val late: Long,
-        val overflow: Long, val underruns: Long, val resets: Long, val primed: Boolean)
+        val overflow: Long, val underruns: Long, val resets: Long, val primed: Boolean,
+        val gapFilled: Long)
     private val sourceDiagnostics = mutableMapOf<String, SourceDiagnostic>()
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateDevices()
@@ -281,7 +282,7 @@ class MainActivity : Activity() {
             text = "标记刚才的闪断"; isAllCaps = false
             setOnClickListener {
                 val now = SystemClock.elapsedRealtime() - diagnosticStart
-                markedDiagnostic = "+${now}ms 用户标记；音源采样时间 +${latestNativeAt}ms\n${actual.text}\n$latestNativeDiagnostics"
+                markedDiagnostic = "+${now}ms 用户标记；音源采样时间 +${latestNativeAt}ms\n${actual.text}\n${compactDiagnostics()}"
                 recordEvent("用户标记闪断；最近音源采样 +${latestNativeAt}ms")
                 Toast.makeText(this@MainActivity, "已保留此刻状态，可复制诊断信息", Toast.LENGTH_SHORT).show()
             }
@@ -291,9 +292,9 @@ class MainActivity : Activity() {
             setOnClickListener {
                 val details = listOf("LanMix ${packageManager.getPackageInfo(packageName, 0).versionName}",
                     status.text, actual.text, bufferHealth.text, networkStats.text, masterMeter.text,
-                    capabilities.text, "原始音源诊断（+${latestNativeAt}ms 采样）：\n$latestNativeDiagnostics",
+                    "音源诊断（+${latestNativeAt}ms 采样，仅省略未使用槽位的电平）：\n${compactDiagnostics()}",
                     "最近一次闪断标记：\n$markedDiagnostic",
-                    "最近事件（本次打开应用，重建不清空）：\n${history.text()}").joinToString("\n\n")
+                    "最近事件（本次打开应用，重建不清空）：\n${history.text()}", capabilities.text).joinToString("\n\n")
                 getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", details))
                 Toast.makeText(this@MainActivity, "诊断信息已复制", Toast.LENGTH_SHORT).show()
             }
@@ -397,15 +398,19 @@ class MainActivity : Activity() {
             val identity = "${item.optString("source")}/${item.optLong("stream_id")}"
             val diagnostic = SourceDiagnostic(item.optLong("session_id"), item.optLong("concealed_frames"),
                 item.optLong("late_packets"), item.optLong("queue_overflows"), meter?.optLong("underruns") ?: 0,
-                item.optLong("reset_count"), meter?.optBoolean("primed") == true)
+                item.optLong("reset_count"), meter?.optBoolean("primed") == true,
+                item.optLong("gap_filled_packets"))
             val previous = sourceDiagnostics.put(identity, diagnostic)
             if (previous == null || previous != diagnostic) {
                 recordEvent("音源 $identity：会话 ${diagnostic.session}，丢帧 ${diagnostic.lost}，迟到 ${diagnostic.late}，" +
                     "溢出 ${diagnostic.overflow}，缺粮 ${diagnostic.underruns}，重置 ${diagnostic.resets} " +
-                    "(${item.optString("reset_reason")})，${if (diagnostic.primed) "播放中" else "缓冲中"}")
+                    "(${item.optString("reset_reason")})，补回包 ${diagnostic.gapFilled}，" +
+                    "最近缺口 ${item.optString("last_loss_kind")} / ${item.optLong("last_loss_frames")} 帧，" +
+                    "${if (diagnostic.primed) "播放中" else "缓冲中"}")
             }
             views.second.text = "来源 ${item.optInt("sample_rate")} Hz · 双声道 PCM float\n" +
                 "数据包 ${item.optLong("packets")} · 丢失帧 ${item.optLong("lost_frames")} · 迟到包 ${item.optLong("late_packets")}\n" +
+                "补回包 ${item.optLong("gap_filled_packets")}（含乱序） · 去重 ${item.optLong("duplicate_packets")}\n" +
                 "队列溢出 ${item.optLong("queue_overflows")} · 音源缺粮 ${meter?.optLong("underruns") ?: 0} · 峰值 ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
                 "网络缓冲 ${String.format(Locale.US, "%.1f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
@@ -425,19 +430,49 @@ class MainActivity : Activity() {
         var concealed = 0L
         var lossEvents = 0L
         var resets = 0L
+        var missing = 0L
+        var senderGaps = 0L
+        var recovered = 0L
+        val recentLosses = mutableListOf<String>()
         if (tracks != null) repeat(tracks.length()) { index ->
             val track = tracks.getJSONObject(index)
             concealed += track.optLong("concealed_frames")
             lossEvents += track.optLong("loss_events")
             resets += track.optLong("reset_count")
+            missing += track.optLong("missing_datagrams")
+            senderGaps += track.optLong("sender_gap_frames")
+            recovered += track.optLong("gap_filled_packets")
+            if (!track.isNull("last_loss_age_ms")) {
+                val kind = when (track.optString("last_loss_kind")) {
+                    "sender_timeline" -> "发送时间线跳帧"
+                    "unreceived_datagrams" -> "包序号缺失（网络或发送失败）"
+                    else -> "序号无法分类"
+                }
+                recentLosses.add("音源 ${track.optInt("slot") + 1} 最近缺口：$kind · ${track.optLong("last_loss_frames")} 帧 · ${track.optLong("last_loss_age_ms")} ms 前")
+            }
         }
         networkStats.text = "已接收 ${stats.optLong("received_packets")} 包 / ${stats.optLong("received_bytes")} 字节\n" +
             "无效包 ${stats.optLong("invalid_packets")} · 拒绝音源 ${stats.optLong("rejected_sources")}\n" +
             "本会话音源累计丢帧补偿 $concealed 帧 / $lossEvents 次 · 音源重置 $resets 次（含初次连接）\n" +
+            "未收到序号 $missing 包 · 序号连续的发送缺口 $senderGaps 帧 · 补回 $recovered 包（含乱序）\n" +
+            (if (recentLosses.isEmpty()) "" else recentLosses.joinToString("\n") + "\n") +
             "丢帧补偿和重置不会增加缺粮计数；写入耗时也不直接等同于断音。"
         val master = json.optJSONObject("master")
         masterMeter.text = "峰值 ${peak(master?.optDouble("peak") ?: 0.0)} · 触发保护帧数 ${master?.optLong("clipped_frames") ?: 0}"
     }
+
+    private fun compactDiagnostics(): String = runCatching {
+        val json = JSONObject(latestNativeDiagnostics)
+        val tracks = json.optJSONArray("tracks")
+        val slots = (0 until (tracks?.length() ?: 0)).map { tracks!!.getJSONObject(it).optInt("slot", -1) }.toSet()
+        val meters = json.optJSONArray("meters")
+        val activeMeters = org.json.JSONArray()
+        if (meters != null) repeat(meters.length()) { index ->
+            val meter = meters.getJSONObject(index)
+            if (meter.optInt("slot", -1) in slots) activeMeters.put(meter)
+        }
+        json.put("meters", activeMeters).toString()
+    }.getOrDefault(latestNativeDiagnostics)
 
     private fun recordEvent(event: String) {
         history.record(SystemClock.elapsedRealtime() - diagnosticStart, event)

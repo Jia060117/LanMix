@@ -1,5 +1,36 @@
 # Verified Android build
 
+## 0.1.4 loss classification and delayed PCM backups · 2026-10-31
+
+- Package `io.lanmix.receiver`, **0.1.4 / version code 5**, minimum API 26 / target 37.
+- Artifact: `dist/android/LanMix-0.1.4-debug.apk`, **1,888,912 bytes**.
+- SHA-256: `79562D5EB2412A943959DDBF8822CF24315E5E1147315CD46E10D4F49095DD6C`.
+- Both ARM native libraries rebuilt with `./android/build.ps1 -Offline`.
+  Kotlin tests, assemble and lint passed: **18 tests, 0 errors, 33 lint warnings**.
+  Warnings remain visible, including diagnostic UI text localization.
+- APK v2 signature, `zipalign -c -P 16 4`, and `aapt2` version checks passed.
+  Certificate SHA-256 matches 0.1.3, allowing an in-place update.
+- **49 Rust tests**, formatting and strict Clippy passed. No DSP/CPAL changes.
+- Actual host JNI/UDP test repaired three missing originals with 126 duplicate
+  datagrams discarded and zero consecutive near-silent frames in the tested PCM.
+- Actual CLI sender -> UDP loss proxy -> headless receiver: two three-packet
+  loss bursts gave **576 concealed frames with repair off, 0 with repair on**.
+  1490 delayed copies were byte-identical; median observed delay was 21.63 ms.
+- Two-source 44.1/96 kHz process smoke test passed with backups enabled:
+  zero concealed/late/overflow frames or clipping; finite non-silent mix.
+  Sources stop two seconds before receiver end; each records one terminal
+  starvation, which is expected after the test senders intentionally exit.
+- Windows sender and receiver report **0.1.4**; packaged in
+  `dist/LanMix-0.1.4-windows-x64.zip` (3,057,514 bytes at this check).
+  Native shared crate versions remain 0.1.1; protocol version remains v1.
+
+The supplied 0.1.3 diagnostic proves source-time concealment occurred despite
+zero underruns, not its exact cause or a physical-device cure. The new software
+separates sender timeline gaps from unreceived sequence numbers and attempts
+loss recovery without raising buffer targets. It doubles PCM traffic by default;
+`--repair-ms 0` disables copies. Physical Android/Bluetooth playback is untested
+by the agent. See [investigation and limits](../docs/PLAYBACK-DROPOUTS.md).
+
 ## 0.1.3 dropout investigation and safe playback default · 2026-10-31
 
 - Package `io.lanmix.receiver`, **0.1.3 / version code 4**, API 26 minimum / 37 target.

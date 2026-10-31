@@ -125,6 +125,8 @@ public final class NativeBridge {
             String snapshot = bridge.nativeTracks();
             require(heard && quietFramesAfterSound > 200, "real missing-packet concealment produces a PCM dip");
             require(snapshot.contains("\"concealed_frames\":700") && snapshot.contains("\"loss_events\":1"), "lifetime missing-frame diagnostics");
+            require(snapshot.contains("\"missing_datagrams\":5") && snapshot.contains("\"transport_gap_frames\":700")
+                && snapshot.contains("\"sender_gap_frames\":0"), "sequence diagnostics identify unreceived datagrams");
             require(!java.util.regex.Pattern.compile("\"underruns\":[1-9]").matcher(snapshot).find(), "concealment is not mixer starvation");
             System.out.println("JNI real UDP loss: 700 missing frames, " + quietFramesAfterSound + " quiet frames after sound, mixer underruns remain zero");
             byte[] nextSession = packet(0);
@@ -134,6 +136,47 @@ public final class NativeBridge {
             String afterReset = bridge.nativeTracks();
             require(afterReset.contains("\"concealed_frames\":700") && afterReset.contains("\"reset_count\":2")
                 && afterReset.contains("\"reset_reason\":\"sender_session\""), "lifetime loss evidence survives a sender-session reset");
+            require(afterReset.contains("\"missing_datagrams\":5"), "sequence evidence survives session reset");
+        } finally { bridge.nativeStop(); }
+        bridge.nativeStart(port, 150, 48000);
+        try (DatagramSocket sender = new DatagramSocket()) {
+            float[] block = new float[480 * 2];
+            bridge.nativeFill(block);
+            send(sender, port, 0, 1);
+            bridge.nativeFill(block);
+            bridge.nativeSetMaster(0f, false, 0f, new float[10]);
+            bridge.nativeSetTrack(0, 0f, false, false, false, 0f, new float[10]);
+            send(sender, port, 1, 50);
+            // No 100 ms helper wait between the gap and its repair: recovery
+            // must beat the actual 120 ms reorder deadline at buffer=150 ms.
+            for (int sequence = 54; sequence < 130; sequence++) {
+                byte[] bytes = packet(sequence);
+                sender.send(new DatagramPacket(bytes, bytes.length, InetAddress.getLoopbackAddress(), port));
+            }
+            Thread.sleep(20);
+            for (int sequence = 1; sequence < 130; sequence++) {
+                byte[] bytes = packet(sequence);
+                sender.send(new DatagramPacket(bytes, bytes.length, InetAddress.getLoopbackAddress(), port));
+            }
+            Thread.sleep(100);
+            String repaired = bridge.nativeTracks();
+            require(repaired.contains("\"gap_filled_packets\":3") && repaired.contains("\"duplicate_packets\":126")
+                && repaired.contains("\"concealed_frames\":0") && repaired.contains("\"missing_datagrams\":0"), "real UDP repair and deduplication");
+            // Enough audio remains before and after the repaired interval;
+            // constant nonzero PCM must not acquire a 2 ms silent dropout.
+            int quietRun = 0, maxQuiet = 0;
+            boolean heard = false;
+            for (int i = 0; i < 33; i++) {
+                bridge.nativeFill(block);
+                for (int sample = 0; sample < block.length; sample += 2) {
+                    if (Math.abs(block[sample]) > .01f) heard = true;
+                    if (heard && Math.abs(block[sample]) < 1e-6f && Math.abs(block[sample + 1]) < 1e-6f) quietRun++;
+                    else quietRun = 0;
+                    maxQuiet = Math.max(maxQuiet, quietRun);
+                }
+            }
+            require(heard && maxQuiet < 96, "no 2 ms silent run after real UDP burst repair");
+            System.out.println("JNI real UDP repair: 3 missing originals restored, 126 duplicates removed, max quiet run=" + maxQuiet);
         } finally { bridge.nativeStop(); }
         for (int rate : new int[] {8000, 44100, 48000, 96000, 192000}) {
             bridge.nativeStart(port, 150, rate);

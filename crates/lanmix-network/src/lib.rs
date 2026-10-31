@@ -7,7 +7,7 @@ use rtrb::Producer;
 use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     net::{IpAddr, SocketAddr, UdpSocket},
     sync::{
         Arc, Mutex,
@@ -41,6 +41,25 @@ pub struct TrackSnapshot {
     pub reset_reason: String,
     pub concealed_frames: u64,
     pub loss_events: u64,
+    #[serde(flatten)]
+    pub delivery: DeliveryHealth,
+    pub last_loss_age_ms: Option<u64>,
+}
+
+/// Source-lifetime evidence; a sequence gap is not proof of Wi-Fi loss:
+/// the sender also increments sequence numbers after failed socket sends.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DeliveryHealth {
+    pub duplicate_packets: u64,
+    pub gap_filled_packets: u64,
+    pub missing_datagrams: u64,
+    pub sender_gap_frames: u64,
+    pub transport_gap_frames: u64,
+    pub unknown_gap_frames: u64,
+    pub last_loss_frames: u64,
+    pub last_loss_kind: &'static str,
+    #[serde(skip)]
+    last_loss_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -178,6 +197,7 @@ impl Drop for Receiver {
 struct Pending {
     frames: Vec<StereoFrame>,
     arrived: Instant,
+    seq: u32,
 }
 
 struct Timeline {
@@ -186,6 +206,9 @@ struct Timeline {
     late: u64,
     lost: u64,
     reorder_wait: Duration,
+    previous_seq: Option<u32>,
+    consumed: VecDeque<(u64, u32)>,
+    delivery: DeliveryHealth,
 }
 
 impl Default for Timeline {
@@ -196,6 +219,9 @@ impl Default for Timeline {
             late: 0,
             lost: 0,
             reorder_wait: Duration::from_millis(12),
+            previous_seq: None,
+            consumed: VecDeque::with_capacity(512),
+            delivery: DeliveryHealth::default(),
         }
     }
 }
@@ -209,7 +235,21 @@ impl Timeline {
             Duration::from_millis(buffer_ms.saturating_sub(30).clamp(12, 200) as u64);
     }
 
+    fn is_duplicate(&self, index: u64, seq: u32) -> bool {
+        self.pending.get(&index).is_some_and(|p| p.seq == seq)
+            || self.consumed.contains(&(index, seq))
+    }
+
+    #[cfg(test)]
     fn insert(&mut self, index: u64, frames: Vec<StereoFrame>, now: Instant) {
+        self.insert_packet(index, index as u32, frames, now);
+    }
+
+    fn insert_packet(&mut self, index: u64, seq: u32, frames: Vec<StereoFrame>, now: Instant) {
+        if self.is_duplicate(index, seq) {
+            self.delivery.duplicate_packets += 1;
+            return;
+        }
         let Some(end) = index.checked_add(frames.len() as u64) else {
             self.late += 1;
             return;
@@ -247,11 +287,15 @@ impl Timeline {
                 return;
             }
         }
+        if self.next == Some(index) && !self.pending.is_empty() {
+            self.delivery.gap_filled_packets += 1;
+        }
         self.pending.insert(
             index,
             Pending {
                 frames,
                 arrived: now,
+                seq,
             },
         );
     }
@@ -261,6 +305,11 @@ impl Timeline {
             if let Some(packet) = self.pending.remove(&next) {
                 let len = packet.frames.len();
                 audio(Some(&packet.frames), len);
+                self.previous_seq = Some(packet.seq);
+                if self.consumed.len() == 512 {
+                    self.consumed.pop_front();
+                }
+                self.consumed.push_back((next, packet.seq));
                 self.next = Some(next.saturating_add(len as u64));
                 continue;
             }
@@ -274,6 +323,26 @@ impl Timeline {
             }
             let gap = first.saturating_sub(next) as usize;
             if gap > 0 {
+                let first_seq = self.pending[&first].seq;
+                let distance = self.previous_seq.map(|seq| first_seq.wrapping_sub(seq));
+                let kind = match distance {
+                    Some(1) => {
+                        self.delivery.sender_gap_frames += gap as u64;
+                        "sender_timeline"
+                    }
+                    Some(d) if (2..0x8000_0000).contains(&d) => {
+                        self.delivery.missing_datagrams += u64::from(d - 1);
+                        self.delivery.transport_gap_frames += gap as u64;
+                        "unreceived_datagrams"
+                    }
+                    _ => {
+                        self.delivery.unknown_gap_frames += gap as u64;
+                        "unknown_sequence"
+                    }
+                };
+                self.delivery.last_loss_at = Some(now);
+                self.delivery.last_loss_frames = gap as u64;
+                self.delivery.last_loss_kind = kind;
                 audio(None, gap);
                 self.lost += gap as u64;
             }
@@ -437,7 +506,11 @@ fn receive_loop(
                 slot.online = false;
                 controls[index].set_active(false);
                 controls[index].reset();
-                slot.timeline = Timeline::default();
+                let delivery = std::mem::take(&mut slot.timeline.delivery);
+                slot.timeline = Timeline {
+                    delivery,
+                    ..Timeline::default()
+                };
                 slot.resets += 1;
                 slot.reset_reason = "timeout";
             }
@@ -463,6 +536,12 @@ fn receive_loop(
                         reset_reason: slot.reset_reason.to_owned(),
                         concealed_frames: slot.concealed_frames,
                         loss_events: slot.loss_events,
+                        delivery: slot.timeline.delivery.clone(),
+                        last_loss_age_ms: slot
+                            .timeline
+                            .delivery
+                            .last_loss_at
+                            .map(|at| now.saturating_duration_since(at).as_millis() as u64),
                     })
                 })
                 .collect();
@@ -488,6 +567,13 @@ fn handle_packet(
     }
     let changed_key = slot.key != Some(key);
     let changed_session = slot.session != header.session_id;
+    if !changed_key
+        && !changed_session
+        && slot.timeline.is_duplicate(header.frame_index, header.seq)
+    {
+        slot.timeline.delivery.duplicate_packets += 1;
+        return;
+    }
     if !changed_key
         && !changed_session
         && slot
@@ -536,7 +622,15 @@ fn handle_packet(
         control.set_active(false);
         control.set_sample_rate(header.sample_rate);
         control.reset();
-        slot.timeline = Timeline::default();
+        let delivery = if changed_key {
+            DeliveryHealth::default()
+        } else {
+            std::mem::take(&mut slot.timeline.delivery)
+        };
+        slot.timeline = Timeline {
+            delivery,
+            ..Timeline::default()
+        };
         slot.key = Some(key);
         slot.session = header.session_id;
         slot.rate = header.sample_rate;
@@ -547,12 +641,114 @@ fn handle_packet(
     slot.online = true;
     slot.last_seen = now;
     slot.packets += 1;
-    slot.timeline.insert(header.frame_index, frames, now);
+    slot.timeline
+        .insert_packet(header.frame_index, header.seq, frames, now);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sequence_classifies_sender_gaps_and_unreceived_datagrams_including_wrap() {
+        for (before, after, expected_sender, expected_missing) in [
+            (10, 11, 96, 0),
+            (10, 13, 0, 2),
+            (u32::MAX, 0, 96, 0),
+            (u32::MAX - 1, 1, 0, 2),
+        ] {
+            let now = Instant::now();
+            let mut timeline = Timeline::default();
+            timeline.insert_packet(0, before, vec![[0.25; 2]; 96], now);
+            timeline.drain(now, |_, _| {});
+            timeline.insert_packet(192, after, vec![[0.5; 2]; 96], now);
+            timeline.drain(now + Duration::from_millis(12), |_, _| {});
+            assert_eq!(timeline.delivery.sender_gap_frames, expected_sender);
+            assert_eq!(timeline.delivery.missing_datagrams, expected_missing);
+            assert_eq!(timeline.delivery.transport_gap_frames, 96 - expected_sender);
+            assert_eq!(timeline.delivery.last_loss_frames, 96);
+        }
+    }
+
+    #[test]
+    fn delayed_backups_restore_a_three_packet_burst_exactly_once_without_silence() {
+        let now = Instant::now();
+        let mut timeline = Timeline::default();
+        timeline.set_buffer_ms(150);
+        let original: Vec<_> = (0..12)
+            .flat_map(|n| vec![[n as f32 / 20.0; 2]; 96])
+            .collect();
+        let mut output = Vec::new();
+        // Drop three originals (6 ms); deliver later originals normally.
+        for seq in 0..12u32 {
+            if (3..6).contains(&seq) {
+                continue;
+            }
+            let at = now + Duration::from_millis(u64::from(seq) * 2);
+            timeline.insert_packet(
+                u64::from(seq) * 96,
+                seq,
+                original[seq as usize * 96..(seq as usize + 1) * 96].to_vec(),
+                at,
+            );
+            timeline.drain(at, |f, _| output.extend_from_slice(f.expect("false loss")));
+        }
+        for seq in 0..12u32 {
+            let at = now + Duration::from_millis(20 + u64::from(seq) * 2);
+            timeline.insert_packet(
+                u64::from(seq) * 96,
+                seq,
+                original[seq as usize * 96..(seq as usize + 1) * 96].to_vec(),
+                at,
+            );
+            timeline.drain(at, |f, _| {
+                output.extend_from_slice(f.expect("backup missed deadline"))
+            });
+        }
+        assert_eq!(
+            output, original,
+            "must preserve every PCM sample exactly once"
+        );
+        assert_eq!(timeline.lost, 0);
+        assert_eq!(timeline.late, 0);
+        assert_eq!(timeline.delivery.duplicate_packets, 9);
+        assert_eq!(timeline.delivery.gap_filled_packets, 3);
+    }
+
+    #[test]
+    fn both_copies_lost_or_backup_too_late_still_records_real_loss() {
+        let now = Instant::now();
+        let mut timeline = Timeline::default();
+        timeline.set_buffer_ms(150);
+        timeline.insert_packet(0, 0, vec![[0.25; 2]; 96], now);
+        timeline.drain(now, |_, _| {});
+        timeline.insert_packet(192, 2, vec![[0.25; 2]; 96], now);
+        timeline.drain(now + Duration::from_millis(120), |_, _| {});
+        assert_eq!(timeline.lost, 96);
+        assert_eq!(timeline.delivery.missing_datagrams, 1);
+        timeline.insert_packet(96, 1, vec![[0.25; 2]; 96], now + Duration::from_millis(121));
+        assert_eq!(timeline.late, 1);
+        assert_eq!(timeline.delivery.duplicate_packets, 0);
+        assert_eq!(timeline.delivery.gap_filled_packets, 0);
+    }
+
+    #[test]
+    fn recovered_pending_packet_evicted_at_capacity_can_be_received_again() {
+        let now = Instant::now();
+        let mut timeline = Timeline::default();
+        timeline.insert_packet(0, 0, vec![[0.1; 2]], now);
+        timeline.drain(now, |_, _| {});
+        for index in 2..258u32 {
+            timeline.insert_packet(index as u64, index, vec![[0.1; 2]], now);
+        }
+        timeline.insert_packet(1, 1, vec![[0.1; 2]], now);
+        timeline.drain(now, |_, _| {});
+        timeline.insert_packet(257, 257, vec![[0.1; 2]], now);
+        timeline.drain(now, |_, _| {});
+        assert_eq!(timeline.next, Some(258));
+        assert_eq!(timeline.lost, 0);
+        assert_eq!(timeline.delivery.duplicate_packets, 0);
+    }
 
     #[test]
     fn concealed_network_loss_can_be_silent_without_a_mixer_underrun() {
@@ -651,7 +847,8 @@ mod tests {
             out,
             vec![[1.0; 2], [1.0; 2], [2.0; 2], [2.0; 2], [3.0; 2], [3.0; 2]]
         );
-        assert_eq!(timeline.late, 1);
+        assert_eq!(timeline.late, 0);
+        assert_eq!(timeline.delivery.duplicate_packets, 1);
     }
 
     #[test]

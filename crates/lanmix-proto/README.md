@@ -47,6 +47,16 @@ and stays within those bounds if the caller later modifies the public header.
 Session management, sequence interpretation, packet reordering, and loss handling
 belong to the parent application.
 
+The current sender increments `seq` once for each original datagram attempt,
+including failed socket sends; it wraps modulo 2^32. A delayed backup repeats
+the entire datagram byte for byte, including session, sequence and frame index.
+It does not consume a new sequence number. Within a session, consecutive
+sequences with a forward frame-index gap identify a sender timeline omission;
+missing sequences can result from send failures, network loss or expiry at the
+receiver. Classification uses playback order after the reorder deadline, never
+raw arrival order. Older senders without backups remain compatible. The wire
+format has not changed.
+
 ## Example
 
 ```rust

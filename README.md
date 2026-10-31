@@ -18,10 +18,11 @@
 - 设置保存在当前用户的配置目录，手动保存或退出时保存。
 - Android 原生接收端：输出设备/格式查询、实际 AudioTrack 路由、音量与 EQ，详见 [android/README.md](android/README.md)。
 
-**Android 0.1.3：** 针对 0.1.2 闪断回归，默认恢复“稳定优先”的系统播放缓冲，
-提供 1024 帧写入的“兼容基线”作对照；均衡 / 响应暂作为试验模式。
-修复重复缓冲调节与安全值回退，减少无关路由变化引发的接收重建。
-新增累计丢帧补偿、重建原因、写入耗时、短静音和闪断标记诊断。
+**Android / Windows 工具 0.1.4：** 针对“缺粮为零但时间线缺帧”的闪断，
+发送端默认在约 20 ms 后发送一份原样备份，接收端重排和去重。
+音频不压缩，原包不额外等待；代价是音频 UDP 流量约翻倍。
+新增包序号缺失、发送时间线缺口、补回包和最近缺口诊断，区分后续排查方向。
+继续保留“稳定优先”的系统播放缓冲和“兼容基线”；均衡 / 响应暂作为试验模式。
 建议网络初始缓冲保留 **150ms**，排查方法见 [闪断记录](docs/PLAYBACK-DROPOUTS.md)。
 
 ## Windows 快速开始
@@ -45,6 +46,14 @@ cargo build --release -p lanmix-sender -p lanmix-receiver
 ```
 
 把 IP 换成接收设备的局域网地址。默认采集当前系统默认输出端点；可用 `--output 1` 选择枚举出的输出设备。如果多个发送实例共用一个 IP，为它们指定不同的 `--stream-id`。
+
+0.1.4 的 `send` 和 `tone` 默认开启 `--repair-ms 20`，每个原包约 20 ms 后备份一次，
+不增加接收缓冲目标。需要同时更新发送端和接收端来获得新诊断；协议仍为 v1。
+默认 48 kHz / 2 ms 分包时，UDP 负载从约 404 kB/s 增至 808 kB/s / 音源，
+不含 IP、UDP 和链路开销。多音源共享拥挤 Wi-Fi 时应评估容量。
+`--repair-ms 0` 可关闭作对照；允许 0–50 ms。默认修复建议网络缓冲至少 70 ms，
+当前排查先保留 150 ms。两份都丢失、过期或采集前就没有的样本无法恢复。
+发送控制台每 5 秒报告采集丢帧、发送失败和会话重同步；异常时与接收诊断一起查看。
 
 ```powershell
 .\lanmix-sender.exe send --to 192.168.1.20:46210 --output 1 --stream-id 2
@@ -86,6 +95,7 @@ cargo test --workspace
 cargo test --manifest-path vendor/cpal/Cargo.toml --lib
 cargo clippy --workspace --all-targets -- -D warnings
 python scripts/smoke_test.py --bin-dir target/release
+python scripts/test_redundancy.py --bin-dir target/release
 powershell -ExecutionPolicy Bypass -File scripts/build-desktop.ps1
 ```
 

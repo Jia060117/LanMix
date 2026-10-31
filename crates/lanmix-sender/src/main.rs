@@ -16,6 +16,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod redundancy;
+use redundancy::Redundancy;
+
 struct CapturedFrame {
     samples: [f32; 2],
     index: u64,
@@ -49,6 +52,9 @@ enum Command {
         stream_id: u32,
         #[arg(long, default_value_t = 2.0)]
         packet_ms: f32,
+        /// Send a byte-identical backup this many ms later (0 disables; doubles PCM traffic).
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(0..=50))]
+        repair_ms: u32,
         /// Stop after this many seconds (0 runs until Ctrl+C).
         #[arg(long, default_value_t = 0)]
         seconds: u64,
@@ -63,6 +69,9 @@ enum Command {
         sample_rate: u32,
         #[arg(long, default_value_t = 1)]
         stream_id: u32,
+        /// Delayed identical backups (0 disables; doubles PCM traffic).
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(0..=50))]
+        repair_ms: u32,
         #[arg(long, default_value_t = 0)]
         seconds: u64,
     },
@@ -78,15 +87,17 @@ fn main() -> Result<()> {
             input,
             stream_id,
             packet_ms,
+            repair_ms,
             seconds,
-        } => send(to, output, input, stream_id, packet_ms, seconds),
+        } => send(to, output, input, stream_id, packet_ms, repair_ms, seconds),
         Command::Tone {
             to,
             frequency,
             sample_rate,
             stream_id,
+            repair_ms,
             seconds,
-        } => tone(to, frequency, sample_rate, stream_id, seconds),
+        } => tone(to, frequency, sample_rate, stream_id, repair_ms, seconds),
     }
 }
 
@@ -144,6 +155,7 @@ fn send(
     input: Option<usize>,
     stream_id: u32,
     packet_ms: f32,
+    repair_ms: u32,
     seconds: u64,
 ) -> Result<()> {
     ensure!(
@@ -225,11 +237,25 @@ fn send(
     let mut last_report = Instant::now();
     let mut send_errors = 0u64;
     let mut resyncs = 0u64;
+    let mut backup_sent = 0u64;
+    let mut backup_errors = 0u64;
+    let mut partial_dropped = 0u64;
+    let mut backups = Redundancy::new(repair_ms);
+    println!(
+        "Delayed PCM backup: {repair_ms} ms (0 = disabled); use a receiver network buffer of at least 70 ms for the default 20 ms repair"
+    );
     let started = Instant::now();
     while running.load(Ordering::Acquire)
         && !errors.load(Ordering::Acquire)
         && (seconds == 0 || started.elapsed() < Duration::from_secs(seconds))
     {
+        backups.flush(Instant::now(), |bytes| {
+            if socket.send(bytes).is_ok() {
+                backup_sent += 1;
+            } else {
+                backup_errors += 1;
+            }
+        });
         let current_dropped = dropped.load(Ordering::Relaxed);
         let queued = consumer.slots();
         if queued > config.sample_rate.0 as usize / 5 {
@@ -241,6 +267,7 @@ fn send(
             }
             filled = 0;
             session = session_id();
+            backups.clear();
             resyncs += 1;
         }
         while filled < packet_frames {
@@ -251,6 +278,7 @@ fn send(
                     } else if frame.index != frame_index + filled as u64 {
                         // Each capture frame carries its own source-clock position.
                         // Drop an incomplete packet at a gap rather than falsifying time.
+                        partial_dropped += filled as u64;
                         filled = 0;
                         frame_index = frame.index;
                     }
@@ -275,6 +303,7 @@ fn send(
             } else {
                 send_errors += 1;
             }
+            backups.remember(&packet[..len], Instant::now());
             seq = seq.wrapping_add(1);
             frame_index += filled as u64;
             filled = 0;
@@ -283,12 +312,17 @@ fn send(
         }
         if last_report.elapsed() >= Duration::from_secs(5) {
             println!(
-                "sent {sent} packets | send errors {send_errors} | capture dropped {current_dropped} frames | resyncs {resyncs}"
+                "sent {sent} originals + {backup_sent} backups | original send errors {send_errors} | backup errors {backup_errors} | capture dropped {current_dropped} frames | partial dropped {partial_dropped} frames | resyncs {resyncs} | skipped backups {}",
+                backups.skipped
             );
             last_report = Instant::now();
         }
     }
     drop(stream);
+    println!(
+        "Final: sent {sent} originals + {backup_sent} backups | original send errors {send_errors} | backup errors {backup_errors} | capture dropped {} frames | partial dropped {partial_dropped} frames | resyncs {resyncs}",
+        dropped.load(Ordering::Relaxed)
+    );
     ensure!(
         !errors.load(Ordering::Acquire),
         "capture stream failed; check the selected endpoint"
@@ -358,6 +392,7 @@ fn tone(
     frequency: f32,
     sample_rate: u32,
     stream_id: u32,
+    repair_ms: u32,
     seconds: u64,
 ) -> Result<()> {
     ensure!(
@@ -376,11 +411,21 @@ fn tone(
     let mut packet = [0u8; MAX_DATAGRAM_BYTES];
     let mut seq = 0u32;
     let mut index = 0u64;
+    let mut backups = Redundancy::new(repair_ms);
+    let mut backup_sent = 0u64;
+    let mut backup_errors = 0u64;
     let started = Instant::now();
     println!("Test tone {frequency} Hz at -26 dBFS → {to}; Ctrl+C to stop");
     while running.load(Ordering::Acquire)
         && (seconds == 0 || started.elapsed() < Duration::from_secs(seconds))
     {
+        backups.flush(Instant::now(), |bytes| {
+            if socket.send(bytes).is_ok() {
+                backup_sent += 1;
+            } else {
+                backup_errors += 1;
+            }
+        });
         for (offset, frame) in frames.iter_mut().enumerate() {
             let phase = std::f64::consts::TAU * frequency as f64 * (index + offset as u64) as f64
                 / sample_rate as f64;
@@ -396,6 +441,7 @@ fn tone(
         };
         let len = encode(&header, &frames, &mut packet)?;
         socket.send(&packet[..len])?;
+        backups.remember(&packet[..len], Instant::now());
         seq = seq.wrapping_add(1);
         index += count as u64;
         let deadline = started + Duration::from_secs_f64(index as f64 / sample_rate as f64);
@@ -403,6 +449,8 @@ fn tone(
             thread::sleep(wait);
         }
     }
-    println!("Sent {seq} packets ({index} frames)");
+    println!(
+        "Sent {seq} originals ({index} frames) + {backup_sent} backups | backup errors {backup_errors}"
+    );
     Ok(())
 }

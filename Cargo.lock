@@ -1348,7 +1348,7 @@ version = "0.1.0"
 
 [[package]]
 name = "lanmix-receiver"
-version = "0.1.1"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "lanmix-sender"
-version = "0.1.1"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
