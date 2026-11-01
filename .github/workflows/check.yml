@@ -1,12 +1,27 @@
 name: Rust desktop checks
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   check:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            package: windows-x64
+          - os: ubuntu-22.04
+            package: linux-x64
+          - os: macos-15
+            package: macos-arm64
+          - os: macos-15-intel
+            package: macos-x64
     runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
       # Update deliberately after checking new compiler/Clippy diagnostics locally.
@@ -23,3 +38,16 @@ jobs:
         run: cargo test --manifest-path vendor/cpal/Cargo.toml --lib
       - run: cargo build --locked --release -p lanmix-sender -p lanmix-receiver
       - run: python scripts/smoke_test.py --bin-dir target/release
+      - name: Package desktop binaries
+        run: python scripts/package-desktop.py --platform ${{ matrix.package }}
+      - name: Upload desktop download
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanMix-${{ matrix.package }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

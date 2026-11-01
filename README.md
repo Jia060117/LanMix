@@ -99,11 +99,15 @@ Windows 双击 **`lanmix.exe`** 打开发送窗口；在手机“设备”中选
 |---|---|
 | Windows | 已实现系统声音发送和桌面接收；本机编译/验证记录见 `docs/VALIDATION.md` |
 | Android | 已提供原生 Kotlin 接收端及 Rust JNI；构建和验证范围见 `android/README.md` |
-| Linux | 桌面代码采用 CPAL/egui，可移植；系统声音发送需配置 monitor 输入并显式传 `--input`，未做本机运行验证 |
-| macOS | 桌面接收架构可移植；系统声音采集的 Core Audio taps/ScreenCaptureKit 后端尚未实现 |
+| Linux | 提供 x64 桌面构建；系统声音发送需配置 monitor 输入并显式传 `--input`；无声 UDP 检查不代替声卡实测 |
+| macOS | 提供 Apple Silicon / Intel 独立构建及接收端 App；系统声音采集后端尚未实现，发送需显式配置输入 |
 | iOS/iPadOS | 尚未提供应用外壳；共享 Rust 核心不等于已完成 iOS 产品 |
 
 当前已支持 IPv4 局域网自动发现和点击连接，同时保留 IP 直连。发现默认使用 UDP 46211，音频默认使用 UDP 46210；设备列表会移除离线设备。Android 已提供手动启动的后台播放服务，桌面端尚无托盘和开机自启。尚未提供配对和加密，发现与协议 v1 面向可信局域网。
+
+Windows / Linux / macOS 下载包由 GitHub Actions 构建，检查通过后保存在对应运行的
+**Artifacts**，保留 30 天。本机没有 Mac 也能使用云端 Mac 构建；iOS 尚无 App 工程，
+不能直接生成 IPA。下载方法、平台边界和本机打包见 [桌面构建说明](docs/DESKTOP-BUILDS.md)。
 
 ## 检查与构建
 
