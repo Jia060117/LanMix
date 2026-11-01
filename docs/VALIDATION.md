@@ -2,6 +2,13 @@
 
 当前验证日期：2026-11-01。环境：Windows x64，Rust/Cargo 1.97.1。
 
+Android 0.2.2：36 项 Kotlin 测试、APK 编译与 lint 通过（0 errors / 37 warnings）。
+新增三档屏宽、三档字体大小下的底栏间距与整体居中、触控高度及无障碍检查；
+API 35 原生 Skia 确认真实 AGSL 编译成功，深浅主题的软件画布布局已渲染检查。
+软件预览使用玻璃降级表面，不代表硬件 GPU 折射效果。本轮没有 USB 手机连接，
+未做真机安装、玻璃观感、性能或听感验收。双 ARM 音频库与 0.2.1 逐字节一致，
+签名沿用原证书、16 KiB ZIP 对齐通过；保留此前的窗口初始化修复。
+
 Android 0.2.1：读取用户 Android 17 / API 37 手机的实际崩溃栈，确认 0.2.0 在
 窗口 decor 创建前访问 `Window.insetsController`，于 `PhoneWindow` 内部空指针崩溃。
 现改为构建完整内容、调用 `setContentView` 后再设置系统栏样式。通过 ADB 覆盖安装

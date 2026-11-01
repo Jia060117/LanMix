@@ -30,7 +30,7 @@ class MainActivityTest {
                 try { root.draw(Canvas(bitmap)) } finally { bitmap.recycle() }
             }
             for ((tab, heading) in listOf("混音" to "让声音汇合", "设备" to "附近的设备", "设置" to "按你的习惯")) {
-                texts(root).single { it.text.toString() == tab }.performClick()
+                (texts(root).single { it.text.toString() == tab }.parent as View).performClick()
                 draw()
                 assertTrue(texts(root).single { it.text.toString() == heading }.isShown)
             }

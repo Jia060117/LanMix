@@ -2,6 +2,27 @@
 
 ## Current build · 2026-11-01
 
+- Package `io.lanmix.receiver`, **0.2.2 / version code 9**, minimum API 26 / target 37.
+- Artifact: `dist/android/LanMix-0.2.2-debug.apk`, **2,402,709 bytes**.
+- SHA-256: `90DEACFDF9C943870D455E74C34F7818B0F4E4B29C1383FDF7EA4A1FCEB2F548`.
+- `android/build.ps1 -SkipNative -Offline`: **36 Kotlin tests**, APK assembly and
+  lint passed (**0 errors / 37 warnings**). Both packaged ARM libraries are
+  byte-identical to 0.2.1. Existing debug certificate matches; APK signature and
+  16 KiB ZIP alignment passed. Windows remains 0.2.0.
+- Navigation uses explicit centered icon/label groups with a 3 dp gap, a 336 dp
+  width cap and a 64 dp default height that grows with font size. Layout tests
+  cover three widths and 1.0 / 1.3 / 2.0 font scale on API 28 / 32 / 35, plus
+  clicks, accessibility selection and the existing startup/recreation regression.
+- Glass tint and selection are lighter; 1.5 dp blur preserves background detail.
+  The capsule lens has a narrow highlight and padded backdrop sampling. Native
+  Skia API 35 compiles the actual runtime shader and asserts successful creation.
+- Light/dark idle-fixture layout previews were rendered and inspected. Their
+  software canvas uses the translucent fallback, so they do not establish GPU
+  refraction appearance. No USB device was connected; no install, physical GPU,
+  listening or performance acceptance is claimed this iteration.
+
+## 0.2.1 startup repair · 2026-11-01
+
 - Package `io.lanmix.receiver`, **0.2.1 / version code 8**, minimum API 26 / target 37.
 - Artifact: `dist/android/LanMix-0.2.1-debug.apk`, **2,303,565 bytes**.
 - SHA-256: `943AB30D3D0FA738F812C4467071C29EF6AE33B87D1CC3EA6D21AAFFE109DF95`.

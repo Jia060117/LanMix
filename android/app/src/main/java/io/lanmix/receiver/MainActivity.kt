@@ -153,9 +153,10 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         run { window.statusBarColor = Color.TRANSPARENT; window.navigationBarColor = Color.TRANSPARENT }
         val shell = FrameLayout(this).apply { setBackgroundColor(this@MainActivity.background) }
-        pageHost = FrameLayout(this); shell.addView(pageHost, FrameLayout.LayoutParams(-1, -1))
+        pageHost = FrameLayout(this).apply { setBackgroundColor(this@MainActivity.background) }
+        shell.addView(pageHost, FrameLayout.LayoutParams(-1, -1))
         fun page(title: String, subtitle: String): LinearLayout {
-            val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(22), dp(22), dp(112)) }
+            val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(16), dp(22), dp(104)) }
             val scroll = ScrollView(this).apply {
                 isFillViewport = true; clipToPadding = false; isVerticalScrollBarEnabled = false
                 addView(column); visibility = View.GONE
@@ -163,15 +164,16 @@ class MainActivity : Activity() {
             }
             pages.add(scroll); pageHost.addView(scroll)
             column.addView(text("LANMIX", 11, accent, true).apply { letterSpacing = .18f })
-            column.addView(text(title, 32, ink, true).apply { setPadding(0, dp(8), 0, dp(6)) })
+            column.addView(text(title, 28, ink, true).apply { setPadding(0, dp(6), 0, dp(4)) })
             column.addView(text(subtitle, 13, subtle)); return column
         }
         val home = page("让声音汇合", "多个设备，一个声音出口。")
         val devicesPage = page("附近的设备", "连接同一局域网，轻点即可汇入声音。")
         val settings = page("按你的习惯", "音质、输出与连接，一处管理。")
         navigation = GlassNavigation(this, pageHost, dark, accent) { showPage(it) }
-        shell.addView(navigation, FrameLayout.LayoutParams(-1, dp(70), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-            leftMargin = dp(28); rightMargin = dp(28); bottomMargin = dp(16)
+        val barHeight = dp(64 + ((resources.configuration.fontScale - 1f).coerceAtLeast(0f) * 18).toInt())
+        shell.addView(navigation, FrameLayout.LayoutParams(-2, barHeight, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(12)
         })
         shell.setOnApplyWindowInsetsListener { _, insets ->
             val left: Int; val right: Int; val top: Int; val bottom: Int
@@ -184,15 +186,15 @@ class MainActivity : Activity() {
                     top = insets.systemWindowInsetTop; bottom = insets.systemWindowInsetBottom }
             }
             pageHost.setPadding(left, top, right, 0)
-            pages.forEach { (it.getChildAt(0) as LinearLayout).setPadding(dp(22), dp(22), dp(22), dp(112) + bottom) }
+            pages.forEach { (it.getChildAt(0) as LinearLayout).setPadding(dp(22), dp(16), dp(22), barHeight + dp(40) + bottom) }
             (navigation.layoutParams as FrameLayout.LayoutParams).apply {
-                leftMargin = dp(28) + left; rightMargin = dp(28) + right; bottomMargin = dp(12) + bottom
+                leftMargin = dp(24) + left; rightMargin = dp(24) + right; bottomMargin = dp(12) + bottom
                 navigation.layoutParams = this
             }; insets
         }
         val connection = card(home, "声音入口")
         status = text("准备就绪", 15, accent, true); connection.addView(status)
-        connection.addView(text("${localAddresses()} · UDP ${preferences.getInt("port", 46210)}", 12, subtle).apply { setTextIsSelectable(true) })
+        connection.addView(text("${localAddresses().replace("\n", "  ·  ")}\nUDP ${preferences.getInt("port", 46210)}", 12, subtle).apply { setTextIsSelectable(true) })
         startButton = button("开始接收", true) { if (requested) stopReceiver("用户点击停止") else requestReceiverStart() }
         connection.addView(startButton)
         connection.addView(text("可在后台持续播放，与手机上的其他声音一起聆听。", 12, subtle))
@@ -276,7 +278,7 @@ class MainActivity : Activity() {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", report))
             Toast.makeText(this, "诊断信息已复制", Toast.LENGTH_SHORT).show()
         })
-        settings.addView(text("LanMix 0.2.1  ·  正在施工中\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
+        settings.addView(text("LanMix ${BuildConfig.VERSION_NAME}  ·  正在施工中\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
         // PhoneWindow.getInsetsController() dereferences its decor, even when the
         // Kotlin call uses ?. Install the complete content before accessing it.
         setContentView(shell)
@@ -560,16 +562,16 @@ class MainActivity : Activity() {
 
     private fun card(parent: LinearLayout, title: String): LinearLayout {
         val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(18))
-            background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(24).toFloat() }
+            orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(22).toFloat() }
         }
-        parent.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
-        card.addView(text(title, 18, ink, true).apply { setPadding(0, 0, 0, dp(8)) })
+        parent.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        card.addView(text(title, 16, ink, true).apply { setPadding(0, 0, 0, dp(8)) })
         return card
     }
 
     private fun text(value: String, size: Int, color: Int, bold: Boolean = false) = TextView(this).apply {
-        text = value; textSize = size.toFloat(); setTextColor(color); setPadding(0, dp(4), 0, dp(6))
+        text = value; textSize = size.toFloat(); setTextColor(color); setPadding(0, dp(2), 0, dp(4))
         if (bold) setTypeface(typeface, Typeface.BOLD)
     }
     private fun numberInput(hintText: String, value: String) = EditText(this).apply {

@@ -1,6 +1,6 @@
 # LanMix native Android receiver
 
-Current Android package: **0.2.1 / version code 8**. Pair with the 0.2.0 Windows
+Current Android package: **0.2.2 / version code 9**. Pair with the 0.2.0 Windows
 sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
@@ -11,6 +11,13 @@ capabilities and omits unused meter slots. See
 
 Native Kotlin Activity and playback foreground service, no external UI libraries,
 minimum Android 8 / API 26.
+0.2.2 groups each navigation icon and label with a 3 dp gap and centers the group,
+caps the floating bar at 336 dp, and accommodates enlarged text. The glass uses
+a clear tint, light blur, edge refraction and a lighter selection highlight.
+Page headings and card spacing are more compact. Both themes were rendered for
+layout review; native Skia verifies shader compilation. A physical GPU appearance
+check is still pending because no USB device was connected this iteration.
+The packaged ARM audio libraries are byte-identical to 0.2.1.
 0.2.1 fixes a startup NPE in 0.2.0: system-bar appearance is now set only after
 the complete content view creates the window decor. Confirmed by the Android 17
 device crash stack and an in-place update/cold launch. Audio JNI libraries are

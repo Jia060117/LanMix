@@ -63,7 +63,7 @@ class DiscoveryController(private val context: Context, private val receiver: Re
         runCatching {
             val next = JSONObject().put("id", id).put("name", Build.MODEL.take(64))
                 .put("role", "receiver").put("audio_port", receiver.config?.port ?: preferences.getInt("port", 46210))
-                .put("ready", receiver.running).put("version", "0.2.1").toString()
+                .put("ready", receiver.running).put("version", BuildConfig.VERSION_NAME).toString()
             if (!active || identity != next) {
                 NativeBridge.nativeDiscoveryUpdate(next); active = true; identity = next
             }
