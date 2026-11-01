@@ -1,6 +1,6 @@
 [package]
 name = "lanmix-sender"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 default-run = "lanmix-sender"

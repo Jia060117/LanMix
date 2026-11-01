@@ -1,0 +1,17 @@
+LanMix original source code is licensed under either of:
+
+  - MIT License (LICENSE-MIT)
+  - Apache License, Version 2.0 (LICENSE-APACHE)
+
+at your option.
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+Copyright (c) 2026 Jia060117 and LanMix contributors
+
+Third-party code, fonts, and other assets retain their own licenses.
+In particular, vendor/cpal and the LanMix changes to that copy are distributed
+under Apache-2.0. See vendor/cpal/LICENSE and vendor/cpal/LANMIX_PATCH.md.
+
+See THIRD_PARTY_NOTICES.md, THIRD_PARTY_LICENSES.txt and third-party/ for
+dependency attribution and additional license terms. This file does not
+relicense third-party components or grant rights to third-party trademarks.

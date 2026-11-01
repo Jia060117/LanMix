@@ -1,6 +1,17 @@
 # Verified Android build
 
-## Current build · 2026-11-01
+## Official 1.0.0 · 2026-11-01
+
+- Package `io.lanmix.receiver`, **1.0.0 / version code 10**, minimum API 26 / target 37, non-debuggable release.
+- Artifact: `LanMix-1.0.0-android.apk`, **2,140,705 bytes**.
+- SHA-256: `41cc4531d43635527f2841d2299f7886a574029616ec93e77c27fd0d5e7f1d95`.
+- Full dual-ABI Rust rebuild; Debug and Release each passed **36 Kotlin tests**, assembly and lint. Lint: debug 37 warnings, release 36 warnings, both 0 errors.
+- Publisher certificate: `CN=Jia060117, OU=LanMix, O=Jia060117`, RSA 3072. SHA-256: `d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`. Dedicated private key stays outside the repository; old debug installs need uninstalling before migration.
+- APK v2 signature verification passed. ZIP 16 KiB alignment and all ARM64 / ARMv7 ELF LOAD alignments passed. Packaged libraries match Gradle's stripped outputs, and the inputs match the fresh Rust build.
+- Project and third-party licenses are included in APK assets and checked against the source files.
+- Host JVM `-Xcheck:jni` passed all eleven exports, actual UDP discovery/control, mixed-rate fills and loss/repair experiments. No USB device is connected; this release round does not add physical install, GPU or listening validation.
+
+## Previous 0.2.2 build · 2026-11-01
 
 - Package `io.lanmix.receiver`, **0.2.2 / version code 9**, minimum API 26 / target 37.
 - Artifact: `dist/android/LanMix-0.2.2-debug.apk`, **2,402,709 bytes**.

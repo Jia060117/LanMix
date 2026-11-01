@@ -1,7 +1,9 @@
 # 桌面构建与下载
 
-Android 与桌面端分别迭代版本。Android 当前为 0.2.2，桌面程序当前仍为 0.2.0；
-下载包额外带 Git 提交号，避免把不同提交的同版本程序混淆。音频协议保持兼容。
+v1.0.0 起 Windows 与 Android 统一正式版本。正式下载只提供这两个平台，
+入口见 [Releases](https://github.com/Jia060117/LanMix/releases/latest)。下文的
+Actions 产物属于开发构建，包含尚未完成实体音频验收的 Linux / macOS。
+开发下载包带 Git 提交号，避免混淆不同提交的程序；音频协议保持兼容。
 
 ## 获取程序
 

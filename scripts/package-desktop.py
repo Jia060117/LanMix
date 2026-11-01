@@ -41,6 +41,8 @@ def package(args):
         name: tomllib.loads((ROOT / "crates" / name / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
         for name in ("lanmix-sender", "lanmix-receiver")
     }
+    workspace_version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    versions = {name: workspace_version if value == {"workspace": True} else value for name, value in versions.items()}
     if len(set(versions.values())) != 1:
         raise SystemExit(f"Desktop versions disagree: {versions}")
     version = versions["lanmix-sender"]
@@ -63,6 +65,12 @@ def package(args):
         shutil.copy2(ROOT / "README.md", folder / "README.md")
         shutil.copytree(ROOT / "docs", folder / "docs")
         shutil.copy2(ROOT / "vendor" / "cpal" / "LICENSE", folder / "CPAL-LICENSE")
+        for name in ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt"):
+            shutil.copy2(ROOT / name, folder / name)
+        inventory = json.loads((ROOT / "third-party/rust-dependencies.json").read_text(encoding="utf-8"))
+        if inventory["cargo_lock_sha256"] != hashlib.sha256((ROOT / "Cargo.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest():
+            raise SystemExit("Dependency license inventory is stale; run scripts/collect-licenses.py")
+        shutil.copytree(ROOT / "third-party", folder / "third-party")
         (folder / "BUILD-INFO.json").write_text(json.dumps({
             "version": version, "commit": commit, "platform": args.platform,
             "rustc": command("rustc", "--version"),

@@ -1,0 +1,14 @@
+LanMix
+Copyright (c) 2026 Jia060117 and LanMix contributors
+Maintained and published by Jia060117
+https://github.com/Jia060117/LanMix
+
+LanMix includes CPAL 0.16.0, distributed under Apache-2.0 by its respective
+authors. The vendored WASAPI capture implementation has been modified by
+LanMix contributors to handle silent and invalid capture buffers safely.
+See vendor/cpal/LANMIX_PATCH.md and the retained upstream copyright/license.
+
+Additional third-party attribution, including desktop font licenses and
+Android runtime notices, is in THIRD_PARTY_NOTICES.md and
+THIRD_PARTY_LICENSES.txt. Those notices remain applicable independently
+of the license chosen for LanMix original code.

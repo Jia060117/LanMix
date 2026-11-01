@@ -1,8 +1,20 @@
 [CmdletBinding()]
-param([switch]$SkipNative, [switch]$Offline)
+param([switch]$SkipNative, [switch]$Offline, [switch]$Release)
 $ErrorActionPreference = 'Stop'
 $projectDir = $PSScriptRoot
 $workspaceDir = Split-Path -Parent $projectDir
+if ($Release) {
+    foreach ($key in @('LANMIX_KEYSTORE', 'LANMIX_STORE_PASSWORD', 'LANMIX_KEY_PASSWORD')) {
+        if (-not [Environment]::GetEnvironmentVariable($key, 'Process')) { throw "Release signing requires $key." }
+    }
+    if (-not (Test-Path -LiteralPath $env:LANMIX_KEYSTORE)) { throw 'Release keystore not found.' }
+}
+$licenseAssets = Join-Path $projectDir 'app\generated\licenseAssets'
+New-Item -ItemType Directory -Force -Path $licenseAssets | Out-Null
+foreach ($name in @('LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_LICENSES.txt')) {
+    Copy-Item -LiteralPath (Join-Path $workspaceDir $name) -Destination $licenseAssets
+}
+Copy-Item -LiteralPath (Join-Path $workspaceDir 'third-party\rust-dependencies.json') -Destination $licenseAssets
 
 if (-not $env:ANDROID_HOME) {
     $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
@@ -35,7 +47,7 @@ if (-not $SkipNative) {
         try {
             [Environment]::SetEnvironmentVariable($linkerKey, $linker, 'Process')
             [Environment]::SetEnvironmentVariable($rustFlagsKey, '-C link-arg=-Wl,-z,max-page-size=16384', 'Process')
-            $cargoArgs = @('build', '--manifest-path', (Join-Path $workspaceDir 'crates\lanmix-android\Cargo.toml'),
+            $cargoArgs = @('build', '--locked', '--manifest-path', (Join-Path $workspaceDir 'crates\lanmix-android\Cargo.toml'),
                 '--lib', '--release', '--target', $target.Rust, '--target-dir', $nativeTargetDir)
             if ($Offline) { $cargoArgs += '--offline' }
             & cargo @cargoArgs
@@ -55,7 +67,9 @@ $cachedGradle = Get-ChildItem -LiteralPath (Join-Path $env:USERPROFILE '.gradle\
 $gradle = if ($cachedGradle) { $cachedGradle.FullName } else { Join-Path $projectDir 'gradlew.bat' }
 if (-not (Test-Path -LiteralPath $gradle)) { throw 'Gradle 9.6.1 cache or Gradle wrapper is required.' }
 $gradleArgs = @('-p', $projectDir, 'testDebugUnitTest', 'assembleDebug', 'lintDebug', '--console=plain')
+if ($Release) { $gradleArgs += @('testReleaseUnitTest', 'assembleRelease', 'lintRelease') }
 if ($Offline) { $gradleArgs += '--offline' }
 & $gradle @gradleArgs
 if ($LASTEXITCODE -ne 0) { throw 'Android tests, build or lint failed.' }
 Write-Output "APK: $(Join-Path $projectDir 'app\build\outputs\apk\debug\app-debug.apk')"
+if ($Release) { Write-Output "Release APK: $(Join-Path $projectDir 'app\build\outputs\apk\release\app-release.apk')" }

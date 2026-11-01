@@ -1,7 +1,11 @@
 # LanMix native Android receiver
 
-Current Android package: **0.2.2 / version code 9**. Pair with the 0.2.0 Windows
-sender to enable default 20 ms byte-identical backups; the v1 protocol is unchanged.
+Current Android package: **1.0.0 / version code 10**, paired with the 1.0.0 Windows
+sender. Official APKs use Jia060117's dedicated release certificate; old debug
+builds require uninstalling before migration. Release signing, dependencies and
+build instructions: [BUILDING.md](../docs/BUILDING.md). The historical UI notes
+below describe the preceding iterations. Default 20 ms byte-identical backups
+and the v1 protocol are unchanged.
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
 count gap fillers/duplicates, and show the latest loss age. Cumulative evidence
@@ -25,7 +29,7 @@ byte-identical to 0.2.0.
 Build and target API 37, the newest stable platform installed on this host (its
 `source.properties` reports Android 17, preview SDK 0, no beta codename). Android
 Gradle plugin 9.3.2 includes Kotlin support; cached Gradle 9.6.1 and Android
-Studio's bundled JDK are used. The installed NDK is 30.0.14904198 (r30-beta1).
+JDK 21 are used. The installed NDK is 30.0.14904198 (r30-beta1).
 
 ## Build
 

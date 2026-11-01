@@ -1,146 +1,159 @@
+<div align="center">
+
 # LanMix
 
-🚧 正在施工中：多设备局域网音频聚合与混音工具，功能持续完善中。
+**让每台设备的声音，都有一个共同的出口。**
 
-把多台设备的声音，通过局域网汇聚到一个接收端。每台设备可以独立调节音量、静音、独听、左右平衡和 10 段均衡器，混音后统一输出到当前耳机、音箱或 USB 声卡。
+把多台电脑的声音汇聚到手机或电脑，独立调节，统一聆听。
 
-**当前为 0.2 开发版。优先保证聚合、格式透明和可控混音，不承诺特定 CPU、内存或端到端延迟。**
+[![License: MIT / Apache-2.0](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](LICENSE)
+[![Platform: Windows / Android](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-607D8B.svg)](#运行环境与兼容说明)
+[![GitHub Release](https://img.shields.io/github/v/release/Jia060117/LanMix)](https://github.com/Jia060117/LanMix/releases/latest)
+[![Rust desktop checks](https://github.com/Jia060117/LanMix/actions/workflows/check.yml/badge.svg)](https://github.com/Jia060117/LanMix/actions/workflows/check.yml)
 
-## 已实现
+由 **[情绪零碎の佳 · Jia060117](https://github.com/Jia060117)** 开发与维护
 
-- Rust Workspace：协议、实时 DSP、网络、平台音频、发送端、桌面接收端和 Android JNI。
-- Windows WASAPI 系统声音回环采集；采集回调只写预分配 SPSC 队列，工作线程发送 UDP。
-- 原始 f32 双声道 PCM，保留来源采样率，支持 8–192 kHz；每包不超过 1200 字节。
-- 最多 16 路输入，按采样帧位置重排、去重和补偿缺失时间，独立断流和重连。
-- 每路独立异步重采样和缓冲水位速率修正，预分配音频队列。
-- 每路音量、静音、独听、平衡、EQ 预放大和 10 段 EQ；总音量和总 EQ。
-- 桌面接收端图形界面、输出选择、系统默认输出跟随、系统报告的格式列表、应用打开的流格式、电平表。
-- 设置保存在当前用户的配置目录，手动保存或退出时保存。
-- Android 原生接收端：三页界面、悬浮玻璃底栏、浅色/深色、独立音量与 EQ、设备能力与实际输出查询。
-- Windows 纯 Rust 原生发送窗口，双击 `lanmix.exe` 即可操作；命令行和 Rust/egui 桌面混音接收端继续提供。
-- 发送端与接收端双向局域网自动发现、点击连接、按 IP 手动查找；发现与 PCM 音频使用独立线程和端口。
+[下载正式版](https://github.com/Jia060117/LanMix/releases/latest) · [运行环境](#运行环境与兼容说明) · [使用方法](#开始使用) · [源码构建](#开发与构建) · [反馈问题](https://github.com/Jia060117/LanMix/issues)
 
-**当前界面版本 0.2.0：** Android 在“混音 / 设备 / 设置”中管理音源、连接和输出，
-底栏按系统能力提供背景模糊与边缘折射。Windows 原生发送窗口约 1.2 MB，
-不依赖 WebView。两端启动后可自动发现，接收端可以请求空闲的电脑开始发送；
-电脑也可以主动连接已启动的接收端。详见 [界面与连接说明](docs/UI-DISCOVERY.md)。
+</div>
 
-**Android 请使用 0.2.2：** 底栏图标与文字紧凑居中，采用更清透的玻璃表面、边缘折射与轻量选中高光，
-收紧页面留白，并保留 0.2.1 的启动闪退修复。布局和着色器编译已验证，新玻璃观感仍需真机确认；Windows 端继续使用 0.2.0。
+耳机连接手机时，也想听到台式机、笔记本上的声音？LanMix 通过局域网接收这些设备的
+系统音频，在接收端混音，再交给当前耳机、音箱或 USB 声卡播放。
 
-Android 音频、网络和来源设置由前台播放服务管理，支持页面隐藏后的持续接收。
-应用不主动申请音频焦点，保留共享 PCM 输出和普通服务通知。
-[后台播放说明](docs/ANDROID-BACKGROUND.md) 中列出了行为边界和真机验证步骤。
+**v1.0.0 正式版提供 Windows x64 和 Android 安装包。** 项目以多设备聚合、
+音质和稳定播放为优先，持续完善界面与设备兼容性。
 
-**Android / Windows 工具 0.1.4：** 针对“缺粮为零但时间线缺帧”的闪断，
-发送端默认在约 20 ms 后发送一份原样备份，接收端重排和去重。
-音频不压缩，原包不额外等待；代价是音频 UDP 流量约翻倍。
-新增包序号缺失、发送时间线缺口、补回包和最近缺口诊断，区分后续排查方向。
-继续保留“稳定优先”的系统播放缓冲和“兼容基线”；均衡 / 响应暂作为试验模式。
-建议网络初始缓冲保留 **150ms**，排查方法见 [闪断记录](docs/PLAYBACK-DROPOUTS.md)。
+## 能做什么
 
-## Windows 快速开始
-
-需要 Rust stable 和 MSVC C++ 构建工具；本机验证版本为 Rust 1.97.1。当前仓库的 `Cargo.lock` 固定依赖版本。
-
-```powershell
-cargo build --release -p lanmix-sender -p lanmix-receiver
-.\target\release\lanmix-receiver.exe
-```
-
-Windows 双击 **`lanmix.exe`** 打开发送窗口；在手机“设备”中选择电脑并连接，
-或先在接收设备点击 **开始接收**，再从电脑选择接收设备。Android 安装包与
-`lanmix.exe` 需一起更新到 0.2.0 才能使用自动发现；旧版仍可按 IP 发送。
-
-桌面混音接收端同样点击 **开始接收**。默认监听 UDP `46210`，新安装的图形接收端默认初始缓冲 150ms，已有设置保留。输出采用设备默认采样率；可以选择设备和工作采样率，点击 **应用并重启** 生效。
-
-**0.1.1 连续播放修复：** 每路缺粮后自动扩大缓冲目标，最高 400ms；缺包等待时间随缓冲调整，避免过早把迟到的音频替换成静音。界面显示实际缓冲、目标值和缺粮次数。升级后建议先把初始缓冲改为 **150ms** 再启动，详见 [断音诊断与验证](docs/AUDIO-DROPOUTS.md)。这会增加缓冲时间，优先保证连续播放。
-
-在每台 Windows 发送设备上运行：
-
-```powershell
-.\lanmix-sender.exe devices
-.\lanmix-sender.exe send --to 192.168.1.20:46210
-```
-
-把 IP 换成接收设备的局域网地址。默认采集当前系统默认输出端点；可用 `--output 1` 选择枚举出的输出设备。如果多个发送实例共用一个 IP，为它们指定不同的 `--stream-id`。
-
-0.1.4 的 `send` 和 `tone` 默认开启 `--repair-ms 20`，每个原包约 20 ms 后备份一次，
-不增加接收缓冲目标。需要同时更新发送端和接收端来获得新诊断；协议仍为 v1。
-默认 48 kHz / 2 ms 分包时，UDP 负载从约 404 kB/s 增至 808 kB/s / 音源，
-不含 IP、UDP 和链路开销。多音源共享拥挤 Wi-Fi 时应评估容量。
-`--repair-ms 0` 可关闭作对照；允许 0–50 ms。默认修复建议网络缓冲至少 70 ms，
-当前排查先保留 150 ms。两份都丢失、过期或采集前就没有的样本无法恢复。
-发送控制台每 5 秒报告采集丢帧、发送失败和会话重同步；异常时与接收诊断一起查看。
-
-```powershell
-.\lanmix-sender.exe send --to 192.168.1.20:46210 --output 1 --stream-id 2
-```
-
-局域网接收需要允许对应应用的 UDP 入站。程序不会自动修改系统防火墙。
-
-也可以先发送低音量测试音：
-
-```powershell
-.\lanmix-sender.exe tone --to 127.0.0.1:46210 --frequency 440 --seconds 10
-```
-
-## 音频格式与音质
-
-界面明确区分 **系统报告的能力** 与 **应用当前打开的流格式**。OS 共享混音器、蓝牙链路和外部硬件还可能执行转换。不能把 f32 的内部计算精度等同于耳机的真实 DAC 位深，也不能将多个格式列表的最大值拼成设备保证支持的组合。
-
-内部处理和网络传输均为 f32，接收端按实际工作采样率混音。音量和 EQ 开关采用平滑处理。默认主音量 -6dB 留出叠加余量。最终 ±0.98 的保护目前是**硬上限**，触发时界面显示计数；它不是无失真的限幅器或 true-peak limiter。输入叠加或 EQ 提升较大时应降低预放大/主音量。
-
-默认输出是双声道。单声道输出执行左右平均；多声道输出只向前两个声道写入，其他声道静音。发送端暂不自动把环绕声混成双声道，遇到多声道采集端点会明确拒绝。
-
-## 平台边界
-
-| 平台 | 当前状态 |
+| 功能 | 说明 |
 |---|---|
-| Windows | 已实现系统声音发送和桌面接收；本机编译/验证记录见 `docs/VALIDATION.md` |
-| Android | 已提供原生 Kotlin 接收端及 Rust JNI；构建和验证范围见 `android/README.md` |
-| Linux | 提供 x64 桌面构建；系统声音发送需配置 monitor 输入并显式传 `--input`；无声 UDP 检查不代替声卡实测 |
-| macOS | 提供 Apple Silicon / Intel 独立构建及接收端 App；系统声音采集后端尚未实现，发送需显式配置输入 |
-| iOS/iPadOS | 尚未提供应用外壳；共享 Rust 核心不等于已完成 iOS 产品 |
+| 多设备聚合 | 最多 16 路来源，各路独立接入、断开和重连 |
+| 局域网发现 | 两端自动发现设备、点击连接，也可手动输入 IP |
+| 独立混音 | 单设备音量滑块、静音、独听、左右平衡，以及总音量 |
+| 10 段均衡器 | 每路和总输出分别设置 EQ 与预放大 |
+| 音质优先 | 不做有损编码，使用浮点立体声 PCM，保留来源采样率并独立重采样 |
+| 输出信息 | 查看系统报告的设备能力、应用打开的流格式与实际输出路由 |
+| Android 后台 | 前台服务持续接收，不主动申请音频焦点，可与其他共享输出应用共播 |
+| 故障诊断 | 电平、缓冲、网络缺帧和输出缺粮统计，支持复制诊断信息 |
 
-当前已支持 IPv4 局域网自动发现和点击连接，同时保留 IP 直连。发现默认使用 UDP 46211，音频默认使用 UDP 46210；设备列表会移除离线设备。Android 已提供手动启动的后台播放服务，桌面端尚无托盘和开机自启。尚未提供配对和加密，发现与协议 v1 面向可信局域网。
+Windows 发送窗口使用 Rust / Win32，无 WebView。Android 使用原生 Kotlin 界面，
+提供混音、设备、设置三页，随系统切换深浅色，浮动玻璃底栏按系统绘图能力降级。
 
-Windows / Linux / macOS 下载包由 GitHub Actions 构建，检查通过后保存在对应运行的
-**Artifacts**，保留 30 天。本机没有 Mac 也能使用云端 Mac 构建；iOS 尚无 App 工程，
-不能直接生成 IPA。下载方法、平台边界和本机打包见 [桌面构建说明](docs/DESKTOP-BUILDS.md)。
+## 运行环境与兼容说明
 
-## 检查与构建
+| 平台 | 正式下载 | 说明 |
+|---|---|---|
+| Windows 10 / 11 x64 | `LanMix-1.0.0-windows-x64.zip` | 原生发送窗口、命令行发送端、桌面混音接收端 |
+| Android 8.0+ / API 26+ | `LanMix-1.0.0-android.apk` | ARM64 / ARMv7 双架构，无需 Root；Android 17+ 需允许本地网络访问 |
+| Linux / macOS | 暂不提供正式版 | 有 CI 开发构建，尚未完成实体音频设备验收；macOS 系统声音采集未实现 |
+| iOS / iPadOS | 暂不支持 | 尚无可安装 App 工程 |
+
+设备需处于可互通的局域网。默认音频端口为 **UDP 46210**，自动发现使用
+**UDP 46211**，连接控制另用动态 UDP 端口。访客网络、AP 隔离、VPN 或防火墙
+可能影响发现和音频收发。
+
+正式包沿用已迭代验证的 Windows / Android 功能。自动测试、进程联机测试和
+此前真机验证的范围见 [验证记录](docs/VALIDATION.md)，不代表所有手机、GPU、
+耳机与路由器组合均已验收。
+
+## 开始使用
+
+### 1. 下载并打开
+
+从 [Releases](https://github.com/Jia060117/LanMix/releases/latest) 下载正式包。
+Windows 解压后双击 **`lanmix.exe`**；手机安装 APK 后打开 LanMix。
+可用同页 `SHA256SUMS.txt` 核对下载文件。
+
+**从旧测试版升级：** v1.0.0 改用 Jia060117 专用发布签名。此前调试签名 APK
+需先卸载再安装，旧版应用设置会清除。后续正式版沿用该发布密钥。
+Windows 程序未购买商业代码签名证书。
+
+### 2. 连接设备
+
+1. 手机与电脑接入同一局域网，允许相关网络权限和防火墙访问。
+2. 手机进入「设备」，选择电脑，点击「连接并接收」。Windows 保持「允许接收端发起连接」开启。
+3. 或先在手机「混音」页开始接收，再从 Windows 设备列表选择手机并连接。
+4. 其他电脑重复连接同一接收端，即可同时听到多台设备。
+
+如果要让电脑作为混音中心，运行 **`lanmix-receiver.exe`**。
+发现失败时可手动输入接收端地址；命令行示例：
 
 ```powershell
-cargo fmt --all -- --check
-cargo test --workspace
-cargo test --manifest-path vendor/cpal/Cargo.toml --lib
-cargo clippy --workspace --all-targets -- -D warnings
-python scripts/smoke_test.py --bin-dir target/release
-python scripts/test_redundancy.py --bin-dir target/release
-python scripts/test_discovery.py --bin-dir target/release
-powershell -ExecutionPolicy Bypass -File scripts/build-desktop.ps1
+.\lanmix-sender.exe send --to 192.168.1.184:46210
 ```
 
-无音频设备的机器也可以运行真实 UDP 接收和混音验证，不会播放声音：
+多台电脑可直接连接同一接收端；同一台电脑启动多个 CLI 来源时，请使用不同的 `--stream-id`。
 
-```powershell
-.\target\release\lanmix-receiver.exe --headless --bind 127.0.0.1:46210 --seconds 10 --report report.json
-```
+### 3. 调整听感
 
-## 项目结构
+在接收端拖动各设备音量，按需启用静音、独听或展开「均衡器与预放大」。
+在设置中选定输出设备，查看实际路由和系统报告的格式。
+
+日常使用建议保留 **稳定优先 + 150 ms 初始网络缓冲**。网络缓冲会按抖动调整；
+均衡、响应模式仍属于试验选项。调高 EQ 前可适当降低预放大，避免叠加后削波。
+
+## 使用前了解这些边界
+
+- 系统报告的采样率、位深或编码能力不等于耳机实际链路上限；应用不能证明蓝牙编码器或 DAC 最终工作格式，也不会凭空提升音源质量。
+- 未压缩 PCM 会占用局域网带宽。发送端默认约 20 ms 后补发原样备份，流量约翻倍，用于抵抗短时丢包，不保证任意网络中零闪断。
+- 后台共播依赖系统共享输出及其他应用行为；通话、独占音频和厂商省电策略仍可能影响播放。[后台说明](docs/ANDROID-BACKGROUND.md) 列出具体边界。
+- 当前发现与音频协议没有配对认证或加密，请在可信局域网使用。关闭 Windows 的「允许接收端发起连接」可禁用远端启动发送。
+- 不承诺固定延迟、CPU 或内存占用，正式发布也不将无声自动测试等同于实体耳机听音。
+
+## 常见问题
+
+**找不到设备？**
+
+确认双方已打开 LanMix，并检查本地网络权限、防火墙与 AP 隔离。先尝试手动 IP；
+排查时暂时停用改变局域网路由的 VPN。详见 [界面与连接说明](docs/UI-DISCOVERY.md)。
+
+**听不到声音或偶尔闪断？**
+
+确认发送端正在采集正确的系统输出、接收端已开始接收、各路没有静音。
+先恢复稳定优先和 150 ms 缓冲，再复制诊断信息并记录发生时间。
+缺粮计数为零也可能存在来源时间线缺口，见 [闪断排查](docs/PLAYBACK-DROPOUTS.md)。
+
+**锁屏或切走页面后停止？**
+
+保留播放服务通知，并检查系统是否限制 LanMix 后台运行。应用已使用前台服务，
+但无法绕过厂商进程清理或用户手动强行停止。
+
+**Android 旧版打不开或提示安装冲突？**
+
+使用最新正式 APK；已保留 Android 17 的窗口初始化崩溃修复。
+旧调试版与正式版签名不同，需要卸载旧版。请附安卓版本和崩溃文字反馈。
+
+## 开发与构建
+
+项目采用 Rust Workspace，共享协议、DSP、网络、发现和 Android JNI 核心。
+Android 外层是 Kotlin / AudioTrack；桌面接收端是 Rust / egui。
 
 ```text
-crates/lanmix-proto      明确端序的协议与严格校验
-crates/lanmix-core       重采样、时钟修正、EQ、音量与混音
-crates/lanmix-network    UDP、重排、去重和来源生命周期
-crates/lanmix-audio      桌面音频端点与格式、采集/播放支持
-crates/lanmix-sender     CLI 采集发送和测试音
-crates/lanmix-receiver   桌面界面和无声端到端测试模式
-crates/lanmix-android    JNI 桥接
-android/                Android 接收端
+crates/
+  lanmix-proto       PCM 协议
+  lanmix-core        混音、EQ、重采样与时钟漂移处理
+  lanmix-network     收包、重排、诊断
+  lanmix-audio       桌面音频设备
+  lanmix-discovery   局域网发现与连接
+  lanmix-sender      Windows 原生窗口 / CLI 发送端
+  lanmix-receiver    桌面混音接收端
+  lanmix-android     Android JNI
+android/            Android 原生 App
+vendor/cpal/        保留许可的 WASAPI 采集补丁
 ```
 
-协议详情见 [crates/lanmix-proto/README.md](crates/lanmix-proto/README.md)。
+构建环境、检查命令与发布签名说明见 [源码构建](docs/BUILDING.md)。
+[桌面开发构建](docs/DESKTOP-BUILDS.md) 另说明 macOS 云构建和 iOS 现状。
+反馈时建议附系统版本、连接方式、播放模式及复制出的诊断信息。
 
-Windows 采集依赖采用本地 CPAL 0.16.0 补丁，正确处理 WASAPI 静音缓冲标记。补丁范围与上游许可见 [vendor/cpal/LANMIX_PATCH.md](vendor/cpal/LANMIX_PATCH.md)。
+## 开源许可与致谢
+
+LanMix 原创代码采用 **[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)**
+双许可证，可任选一种；第三方依赖与字体保留各自授权。
+
+感谢 CPAL、egui / eframe、rtrb、jni-rs、Serde、Kotlin 等开源项目。
+Android 的视觉设计参考了 [KernelSU Manager](https://github.com/tiann/KernelSU)，
+使用原生 Views / Canvas / AGSL 独立实现，没有复制其源码或引入 Miuix。
+
+完整说明见 [第三方声明](THIRD_PARTY_NOTICES.md)、[许可全文](THIRD_PARTY_LICENSES.txt)
+及 [依赖清单](third-party/rust-dependencies.json)。重新分发时请保留相关授权与版权声明。

@@ -1,0 +1,7 @@
+{
+  "kotlin-2.2.10-LICENSE.txt": "https://raw.githubusercontent.com/JetBrains/kotlin/v2.2.10/license/LICENSE.txt",
+  "kotlin-2.2.10-NOTICE.txt": "https://raw.githubusercontent.com/JetBrains/kotlin/v2.2.10/license/NOTICE.txt",
+  "annotations-13.0.pom.txt": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.pom",
+  "CC0-1.0.txt": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC0-1.0.txt",
+  "annotations-13.0-copyright.txt": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0-sources.jar"
+}

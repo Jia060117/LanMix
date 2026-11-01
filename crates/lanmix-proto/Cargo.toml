@@ -1,6 +1,6 @@
 [package]
 name = "lanmix-proto"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Allocation-free LanMix v1 stereo audio datagram codec"
 license = "MIT OR Apache-2.0"

@@ -9,15 +9,30 @@ android {
         applicationId = "io.lanmix.receiver"
         minSdk = 26
         targetSdk = 37
-        versionCode = 9
-        versionName = "0.2.2"
+        versionCode = 10
+        versionName = "1.0.0"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    val signingFile = System.getenv("LANMIX_KEYSTORE")
+    signingConfigs {
+        if (signingFile != null) create("publisher") {
+            storeFile = file(signingFile)
+            storePassword = System.getenv("LANMIX_STORE_PASSWORD") ?: error("Missing LANMIX_STORE_PASSWORD")
+            keyAlias = System.getenv("LANMIX_KEY_ALIAS") ?: "lanmix"
+            keyPassword = System.getenv("LANMIX_KEY_PASSWORD") ?: error("Missing LANMIX_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (signingFile != null) signingConfig = signingConfigs.getByName("publisher")
+        }
+    }
+    sourceSets.getByName("main").assets.srcDir("generated/licenseAssets")
     buildFeatures { buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }

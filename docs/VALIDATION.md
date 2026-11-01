@@ -2,6 +2,27 @@
 
 当前验证日期：2026-11-01。环境：Windows x64，Rust/Cargo 1.97.1。
 
+## v1.0.0 正式发布验证
+
+本次统一 Windows / Android 版本，不改变音频协议和 DSP 实现。正式下载仅包含
+Windows x64 ZIP、Android 双 ARM 正式签名 APK 和 SHA256SUMS.txt。
+
+- Rust 格式、严格 Clippy、工作区 56 次测试执行、CPAL 6 项测试及 Windows release 构建通过。
+- Windows 实际进程：44.1 / 96 kHz 双源 UDP 混音、双向设备发现和发现/音频隔离通过。
+- 两次 6 ms 丢包：无备份时补偿 576 帧；20 ms 原样备份开启时补偿 0 帧、补回 6 包。
+- JNI 宿主 JVM `-Xcheck:jni` 验证通过，覆盖全部 11 个导出、真实 UDP、来源控制并发、生命周期、重连与 8 / 44.1 / 48 / 96 / 192 kHz 输出块。
+- Android Debug / Release 各 36 项 Kotlin 测试通过；双变体构建和 lint 通过，分别为 37 / 36 条警告、0 错误。
+- 双 ABI JNI 由当前源码重建；APK 内库与 Gradle 去符号产物一致，ELF LOAD 和 ZIP 均通过 16 KiB 对齐检查。正式 APK 不含 debuggable 标记。
+- 正式 Android 证书：`CN=Jia060117, OU=LanMix, O=Jia060117`，RSA 3072；SHA-256：`d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`。密钥只保存在仓库外。
+- Windows ZIP 与 APK 均附项目及第三方许可；187 个 Rust 包按目标依赖图保守收集，补齐 Kotlin / 注解运行库与字体声明。
+
+此前用户反馈过音频稳定，并已做过 Android 17 启动修复的真机验证；本轮没有 USB
+设备连接，未新增真机安装、GPU 外观、蓝牙/有线听感、锁屏或异机 Wi-Fi 验收。
+网络集成测试为本机真实进程的无声测试，不等同于上述实体设备检查。Linux / macOS
+仍只提供 CI 开发构建，不作为本次正式发行平台。
+
+## 历史验证记录
+
 Android 0.2.2：36 项 Kotlin 测试、APK 编译与 lint 通过（0 errors / 37 warnings）。
 新增三档屏宽、三档字体大小下的底栏间距与整体居中、触控高度及无障碍检查；
 API 35 原生 Skia 确认真实 AGSL 编译成功，深浅主题的软件画布布局已渲染检查。
