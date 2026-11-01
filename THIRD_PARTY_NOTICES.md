@@ -31,6 +31,7 @@ Licence 1.0**、Hack 的 MIT / Bitstream Vera 条款及 emoji 字体 MIT 声明�
 - [Rust 依赖清单](third-party/rust-dependencies.json)：187 个外部包，按 Windows x64、Android ARM64 / ARMv7 的锁定依赖图收集，含构建依赖，排除测试专用边。它是保守声明清单，不声称每个依赖都链接进二进制。
 - [完整许可文本](THIRD_PARTY_LICENSES.txt)：保留各包随附的许可、版权、NOTICE 和字体条款，附 Android 运行库声明。
 - [上游补充来源](third-party/upstream-sources.json) 与 [Android 来源](third-party/android-sources.json)：缺失的文本从对应提交、发布标签或版本化 Maven 制品补齐，缓存于 `third-party/upstream/`。
+- 本次正式二进制使用 Rust 1.97.1，其工具链随附的 [标准库版权与许可](third-party/rust-standard-library-1.97.1.html) 也完整保留，并收入许可全文。该清单覆盖标准库的多平台来源，不表示每个条目都链接到本次应用；更换发布工具链时须同步更新。
 - 依赖更新后运行 `python scripts/collect-licenses.py` 重新生成；打包脚本会检查清单对应的 `Cargo.lock` 摘要。
 - Rust 存在多选一授权时可采用其中兼容的宽松许可；字体的 `AND` 许可需要同时遵守。本次 Windows / Android 范围没有发现必须以 GPL / LGPL 授权 LanMix 原创代码的依赖。
 

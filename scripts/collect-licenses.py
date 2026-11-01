@@ -1,6 +1,7 @@
 """Collect pinned Windows/Android Rust dependency notices from the Cargo sources."""
 import concurrent.futures
 import hashlib
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -11,6 +12,15 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "third-party"
+
+
+class NoticeText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
 
 
 def font_notices(path):
@@ -149,6 +159,11 @@ def collect():
         text.append(f"\n--- {url} ---\n{(OUTPUT / 'upstream' / filename).read_text(encoding='utf-8').rstrip()}\n")
     text.append("\n" + "=" * 72 + "\nCC0-1.0 full text (hexf-parse)\n" +
                 (OUTPUT / "upstream/CC0-1.0.txt").read_text(encoding="utf-8"))
+    standard_library = NoticeText()
+    standard_library.feed((OUTPUT / "rust-standard-library-1.97.1.html").read_text(encoding="utf-8"))
+    text.append("\n" + "=" * 72 + "\nRust standard library 1.97.1 copyright and license notices\n" +
+                "Source: installed Rust 1.97.1 toolchain share/doc/rust/COPYRIGHT-library.html\n" +
+                "".join(standard_library.parts))
     OUTPUT.mkdir(exist_ok=True)
     snapshot = {
         "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
