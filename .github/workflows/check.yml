@@ -24,6 +24,9 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       # Update deliberately after checking new compiler/Clippy diagnostics locally.
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
