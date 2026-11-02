@@ -1,5 +1,17 @@
 # Verified Android build
 
+## 1.0.1 tuning UI · 2026-11-02
+
+- Package `io.lanmix.receiver`, **1.0.1 / version code 11**, minimum API 26 / target 37, non-debuggable release.
+- Local artifact: `dist/android/LanMix-1.0.1.apk`, **2,165,709 bytes**. This build does not replace the published v1.0.0 Release.
+- SHA-256: `05020a20629ef5d0af299bd085a7d5ef2c3d9fbf72e4d120f7ef92e13a4db430`.
+- `android/build.ps1 -SkipNative -Release -Offline`: Debug and Release each passed **57 Kotlin tests**, assembly and lint. Lint: debug **38 warnings**, release **37 warnings**, both **0 errors**.
+- Single volume/EQ editor with master/source selection; six presets, horizontal ten-band faders, gain-curve and touch animations, and advanced preamp. Tests cover preset isolation/persistence, bypass retention, offline/reconnect settings, recycled source slots and stale gestures, animation callbacks, accessibility, and three screen widths/font scales.
+- Deep/light home and two-source EQ previews rendered and inspected with native Skia. Existing real AGSL compilation assertion remains in the preview test; software previews do not establish physical GPU appearance.
+- APK v2 signature and 16 KiB ZIP alignment verified. Publisher certificate is unchanged: `CN=Jia060117, OU=LanMix, O=Jia060117`, SHA-256 `d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`. Supports upgrading the official 1.0.0 installation in place.
+- Both packaged ARM64/ARMv7 JNI libraries are byte-identical to official 1.0.0. All six packaged license/notice assets are unchanged. No DSP, transport, native playback or Windows change.
+- No USB phone is connected. This iteration does not claim physical installation, GPU appearance, performance or listening acceptance.
+
 ## Official 1.0.0 · 2026-11-01
 
 - Package `io.lanmix.receiver`, **1.0.0 / version code 10**, minimum API 26 / target 37, non-debuggable release.

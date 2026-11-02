@@ -1,11 +1,25 @@
 # LanMix native Android receiver
 
-Current Android package: **1.0.0 / version code 10**, paired with the 1.0.0 Windows
-sender. Official APKs use Jia060117's dedicated release certificate; old debug
+Current Android package: **1.0.1 / version code 11**, compatible with the 1.0.0 Windows
+sender. The published GitHub Release remains 1.0.0. Official APKs use Jia060117's dedicated release certificate; old debug
 builds require uninstalling before migration. Release signing, dependencies and
 build instructions: [BUILDING.md](../docs/BUILDING.md). The historical UI notes
 below describe the preceding iterations. Default 20 ms byte-identical backups
 and the v1 protocol are unchanged.
+
+1.0.1 replaces repeated master/source controls with one shared tuning card. Select
+Overall or a source, then use the same volume slider and expandable EQ editor.
+Source mute/solo remains independent. The ten vertical faders run horizontally
+from low to high, with scrolling for narrow screens or enlarged text. Six presets
+(Flat, Bass, Vocal, Pop, Rock, Classical) retain volume/mute/solo and include
+preamp headroom; manual changes remain custom. Preamp is under Advanced. Preset
+transitions, fader touch halos and expansion feedback respect disabled animations
+and never send per-animation-frame DSP updates. Meters and detailed diagnostics
+live in Settings; the receive address lives in Devices. Existing JSON settings
+remain compatible. Audio/native libraries are byte-identical to official 1.0.0.
+Debug/Release each pass 57 tests; both themes have rendered layout previews.
+Physical installation, GPU appearance and listening validation remain pending.
+
 Retain a 150 ms network buffer during investigation. New source diagnostics
 classify sender timeline gaps versus unreceived sequences (including send errors),
 count gap fillers/duplicates, and show the latest loss age. Cumulative evidence

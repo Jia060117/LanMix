@@ -53,6 +53,7 @@ class MixState(private val preferences: SharedPreferences) {
         NativeBridge.nativeSetTrack(index, it.gainDb, it.mute, it.solo, it.eqEnabled, it.preampDb, it.bands)
     }
     fun resetBindings() { repeat(16) { identities[it] = null; tracks[it] = MixControl() } }
+    fun trackIdentity(index: Int): String? = identities.getOrNull(index)
     fun bindTrack(index: Int, source: String, streamId: Long): Boolean {
         val identity = "$source/$streamId"
         if (identities[index] == identity) return false

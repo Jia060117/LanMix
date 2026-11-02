@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private var currentPage = 0
     private lateinit var nearby: LinearLayout
     private lateinit var nearbyStatus: TextView
+    private lateinit var receiveAddress: TextView
     private var nearbySignature = ""
     private val discoveryObserver: () -> Unit = { updateNearby() }
     private val handler = Handler(Looper.getMainLooper())
@@ -62,8 +63,7 @@ class MainActivity : Activity() {
     private lateinit var port: EditText
     private lateinit var buffer: EditText
     private lateinit var startButton: Button
-    private lateinit var sources: LinearLayout
-    private lateinit var emptySources: TextView
+    private lateinit var mixerPanel: MixerPanel
     private var devices = emptyList<AudioDeviceInfo>()
     private var selectedId: Int? = null
     private var rateOptions = listOf(0)
@@ -73,7 +73,6 @@ class MainActivity : Activity() {
     private val requested get() = receiver.requested
     private val running get() = receiver.running
     private var visible = false
-    private val trackViews = mutableMapOf<Int, Pair<TextView, TextView>>()
     private val preferences by lazy { getSharedPreferences("lanmix", MODE_PRIVATE) }
     private val diagnosticStart get() = receiver.startedAt
     private val history get() = receiver.history
@@ -83,7 +82,6 @@ class MainActivity : Activity() {
         get() = receiver.marked
         set(value) { receiver.marked = value }
     private var displayedEpoch = -1L
-    private val viewIdentities = mutableMapOf<Int, String>()
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateDevices()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = updateDevices()
@@ -103,6 +101,8 @@ class MainActivity : Activity() {
         selectedId = receiver.config?.deviceId
         currentPage = savedInstanceState?.getInt("page") ?: 0
         createUi()
+        displayedEpoch = receiver.epoch
+        mixerPanel.restoreSelection(savedInstanceState?.getString("mix_target"), savedInstanceState?.getBoolean("eq_open") ?: false)
         if (policyUpgrade) recordEvent("已启用稳定优先：保留系统播放缓冲；均衡/响应为试验模式")
         manager.registerAudioDeviceCallback(deviceCallback, handler)
         updateDevices()
@@ -138,6 +138,8 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("page", currentPage)
+        outState.putString("mix_target", mixerPanel.selectedSourceKey)
+        outState.putBoolean("eq_open", mixerPanel.equalizerExpanded)
         super.onSaveInstanceState(outState)
     }
 
@@ -194,16 +196,18 @@ class MainActivity : Activity() {
         }
         val connection = card(home, "声音入口")
         status = text("准备就绪", 15, accent, true); connection.addView(status)
-        connection.addView(text("${localAddresses().replace("\n", "  ·  ")}\nUDP ${preferences.getInt("port", 46210)}", 12, subtle).apply { setTextIsSelectable(true) })
         startButton = button("开始接收", true) { if (requested) stopReceiver("用户点击停止") else requestReceiverStart() }
         connection.addView(startButton)
-        connection.addView(text("可在后台持续播放，与手机上的其他声音一起聆听。", 12, subtle))
-        val master = card(home, "总音量")
-        masterMeter = text("等待声音汇入", 12, accent); master.addView(masterMeter); addControls(master, mix.master, null)
-        val sourceCard = card(home, "我的音源")
-        emptySources = text("还没有声音汇入\n在「设备」中连接电脑，或从电脑选择这台手机。", 14, subtle)
-        sourceCard.addView(emptySources)
-        sources = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; sourceCard.addView(sources)
+        connection.addView(text("切走页面，声音也会继续。", 12, subtle))
+        val sound = card(home, "调音")
+        mixerPanel = MixerPanel(this, mix, MixerPalette(ink, subtle, accent, dark), { slot ->
+            if (running) applyControl { if (slot == null) mix.applyMaster() else mix.applyTrack(slot) }
+        }, mix::save, { showPage(1) })
+        sound.addView(mixerPanel)
+        val address = card(devicesPage, "本机接收地址")
+        receiveAddress = text("", 12, subtle).apply { setTextIsSelectable(true) }
+        address.addView(receiveAddress)
+        updateReceiveAddress()
         val discoverCard = card(devicesPage, "局域网设备")
         nearbyStatus = text("正在发现…", 12, subtle); discoverCard.addView(nearbyStatus)
         nearby = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; discoverCard.addView(nearby)
@@ -263,6 +267,7 @@ class MainActivity : Activity() {
         val diagnostics = card(settings, "诊断与帮助")
         val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         diagnostics.addView(button("查看接收状态") { toggle(details) }); diagnostics.addView(details)
+        masterMeter = text("等待声音汇入", 12, accent); details.addView(masterMeter)
         bufferHealth = text("接收后显示各音源缓冲", 12, subtle); details.addView(bufferHealth)
         networkStats = text("本次尚未接收数据", 12, subtle).apply { setTextIsSelectable(true) }; details.addView(networkStats)
         eventHistory = text("暂无事件", 12, subtle).apply { setTextIsSelectable(true) }; details.addView(eventHistory)
@@ -273,12 +278,12 @@ class MainActivity : Activity() {
             Toast.makeText(this, "已保留此刻状态，可复制诊断信息", Toast.LENGTH_SHORT).show()
         })
         diagnostics.addView(button("复制诊断信息") {
-            val report = listOf("LanMix ${packageManager.getPackageInfo(packageName, 0).versionName}", status.text, actual.text,
+            val report = listOf("LanMix ${packageManager.getPackageInfo(packageName, 0).versionName}", receiver.status, actual.text,
                 bufferHealth.text, networkStats.text, masterMeter.text, compactDiagnostics(), "最近闪断标记：\n$markedDiagnostic", history.text(), capabilities.text).joinToString("\n\n")
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("LanMix", report))
             Toast.makeText(this, "诊断信息已复制", Toast.LENGTH_SHORT).show()
         })
-        settings.addView(text("LanMix ${BuildConfig.VERSION_NAME}  ·  正在施工中\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
+        settings.addView(text("LanMix ${BuildConfig.VERSION_NAME}  ·  Jia060117\n为每个设备，留一个声音的位置。", 12, subtle).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, dp(8)) })
         // PhoneWindow.getInsetsController() dereferences its decor, even when the
         // Kotlin call uses ?. Install the complete content before accessing it.
         setContentView(shell)
@@ -289,6 +294,7 @@ class MainActivity : Activity() {
     }
     private fun showPage(index: Int, animate: Boolean = true) {
         currentPage = index.coerceIn(0, 2)
+        if (currentPage == 1) updateReceiveAddress()
         pages.forEachIndexed { i, view -> view.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
         navigation.select(currentPage, animate)
     }
@@ -401,40 +407,25 @@ class MainActivity : Activity() {
     private fun updateTracks(json: JSONObject) {
         val tracks = json.optJSONArray("tracks")
         val seen = mutableSetOf<Int>()
+        val mixerSources = mutableListOf<MixerSource>()
+        val sourceFormats = mutableMapOf<Int, String>()
         if (tracks != null) repeat(tracks.length()) { i ->
             val item = tracks.getJSONObject(i)
             val slot = item.optInt("slot", -1)
             if (slot !in 0..15) return@repeat
             seen.add(slot)
-            val viewIdentity = "${item.optString("source")}/${item.optLong("stream_id")}"
-            if (viewIdentities.put(slot, viewIdentity) != viewIdentity) {
-                trackViews.remove(slot)?.let { sources.removeView(it.first.parent as View) }
-            }
-            val views = trackViews.getOrPut(slot) {
-                val card = card(sources, "音源 ${slot + 1}")
-                val name = text("", 14, ink, true)
-                val details = text("", 12, subtle)
-                card.addView(name)
-                addControls(card, mix.tracks[slot], slot)
-                details.visibility = View.GONE
-                card.addView(button("音源状态") { toggle(details) }); card.addView(details)
-                name to details
-            }
-            views.first.text = "${discovery.nameFor(item.optString("source")) ?: "音源 ${slot + 1}"} · ${item.optString("source")} / 流 ${item.optLong("stream_id")} · ${if (item.optBoolean("online")) "在线" else "离线"}"
-            val meter = json.optJSONArray("meters")?.optJSONObject(slot)
-            views.second.text = "来源 ${item.optInt("sample_rate")} Hz · 双声道 PCM float\n" +
-                "数据包 ${item.optLong("packets")} · 丢失帧 ${item.optLong("lost_frames")} · 迟到包 ${item.optLong("late_packets")}\n" +
-                "补回包 ${item.optLong("gap_filled_packets")}（含乱序） · 去重 ${item.optLong("duplicate_packets")}\n" +
-                "队列溢出 ${item.optLong("queue_overflows")} · 音源缺粮 ${meter?.optLong("underruns") ?: 0} · 峰值 ${peak(meter?.optDouble("peak") ?: 0.0)}\n" +
-                "网络缓冲 ${String.format(Locale.US, "%.1f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
+            val source = item.optString("source")
+            mixerSources.add(MixerSource("$source/${item.optLong("stream_id")}", slot,
+                discovery.nameFor(source) ?: "设备 ${slot + 1}", item.optBoolean("online")))
+            sourceFormats[slot] = "${item.optInt("sample_rate")} Hz · 双声道 PCM float"
         }
-        trackViews.filterKeys { it !in seen }.forEach { (_, views) -> views.first.text = "此通道暂无音源"; views.second.text = "等待音源连接" }
-        emptySources.visibility = if (seen.isEmpty()) View.VISIBLE else View.GONE
+        mixerPanel.setSources(mixerSources)
         val stats = json.optJSONObject("stats") ?: JSONObject()
         val meters = json.optJSONArray("meters")
         bufferHealth.text = if (seen.isEmpty()) "等待音源音频…" else seen.sorted().joinToString("\n") { slot ->
             val meter = meters?.optJSONObject(slot)
-            "音源 ${slot + 1}：网络 ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · 缺粮 ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
+            "${mixerSources.find { it.slot == slot }?.name} · ${sourceFormats[slot]}\n" +
+                "网络 ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · 缺粮 ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
         var concealed = 0L
         var lossEvents = 0L
@@ -472,20 +463,24 @@ class MainActivity : Activity() {
 
     private fun syncReceiver() {
         if (!visible || !::status.isInitialized || NativeBridge.loadError != null) return
-        status.text = receiver.status
+        status.text = if (running) "接收中 · 可在后台播放" else receiver.status
         actual.text = receiver.actual
         startButton.text = if (requested) "停止接收" else "开始接收"
         eventHistory.text = history.text()
         navigation.invalidate()
         if (displayedEpoch != receiver.epoch) {
             displayedEpoch = receiver.epoch
-            trackViews.clear()
-            viewIdentities.clear()
-            sources.removeAllViews()
-            emptySources.visibility = View.VISIBLE
+            mixerPanel.clearSources()
         }
         if (running) runCatching { updateTracks(JSONObject(latestNativeDiagnostics)) }
             .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
+        else if (!requested) mixerPanel.markOffline()
+    }
+
+    private fun updateReceiveAddress() {
+        if (!::receiveAddress.isInitialized) return
+        val listeningPort = if (requested) receiver.config?.port ?: preferences.getInt("port", 46210) else preferences.getInt("port", 46210)
+        receiveAddress.text = "${localAddresses().replace("\n", "  ·  ")}\nUDP $listeningPort"
     }
 
     private fun compactDiagnostics(): String = runCatching {
@@ -506,58 +501,8 @@ class MainActivity : Activity() {
         if (::eventHistory.isInitialized) eventHistory.text = history.text()
     }
 
-    private fun addControls(parent: LinearLayout, control: MixControl, slot: Int?) {
-        fun changed() {
-            mix.save()
-            if (running) applyControl { if (slot == null) mix.applyMaster() else mix.applyTrack(slot) }
-        }
-        slider(parent, "音量", control.gainDb, -60f, 12f) { control.gainDb = it; changed() }
-        if (slot != null) {
-            val toggles = LinearLayout(this)
-            toggles.addView(check("静音", control.mute) { control.mute = it; changed() })
-            toggles.addView(check("独听", control.solo) { control.solo = it; changed() })
-            parent.addView(toggles)
-        }
-        val eq = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        val expand = button("均衡器与预放大") { toggle(eq) }
-        parent.addView(expand)
-        parent.addView(eq)
-        eq.addView(check("启用均衡器", control.eqEnabled) { control.eqEnabled = it; changed() })
-        slider(eq, "预放大", control.preampDb, -24f, 12f) { control.preampDb = it; changed() }
-        val bands = listOf("31.25 Hz", "62.5 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz")
-        bands.forEachIndexed { index, label ->
-            slider(eq, label, control.bands[index], -12f, 12f) { control.bands[index] = it; changed() }
-        }
-    }
-
     private fun applyControl(action: () -> Unit) {
         runCatching(action).onFailure { status.text = "调节失败：${it.message}" }
-    }
-
-    private fun slider(parent: LinearLayout, name: String, value: Float, minimum: Float, maximum: Float, changed: (Float) -> Unit) {
-        val label = text("$name  ${db(value)}", 13, ink)
-        parent.addView(label)
-        parent.addView(SeekBar(this).apply {
-            max = ((maximum - minimum) * 2).toInt()
-            progress = ((value - minimum) * 2).toInt()
-            contentDescription = "$name，单位分贝"
-            progressTintList = ColorStateList.valueOf(accent); thumbTintList = ColorStateList.valueOf(accent); minimumHeight = dp(48)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    if (!fromUser) return
-                    val current = minimum + progress / 2f
-                    label.text = "$name  ${db(current)}"
-                    changed(current)
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar) {}
-            })
-        })
-    }
-
-    private fun check(label: String, value: Boolean, changed: (Boolean) -> Unit) = CheckBox(this).apply {
-        text = label; setTextColor(ink); isChecked = value; buttonTintList = ColorStateList.valueOf(accent); minHeight = dp(48)
-        setOnCheckedChangeListener { _, checked -> changed(checked) }
     }
 
     private fun card(parent: LinearLayout, title: String): LinearLayout {
@@ -597,6 +542,5 @@ class MainActivity : Activity() {
             .joinToString("\n") { it.hostAddress ?: "" }.ifBlank { "请先连接局域网" }
     }.getOrDefault("暂时无法获取本地地址")
     private fun peak(value: Double) = if (value <= 0) "−∞ dBFS" else String.format(Locale.US, "%.1f dBFS", 20 * kotlin.math.log10(value))
-    private fun db(value: Float) = String.format(Locale.US, "%+.1f dB", value)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
