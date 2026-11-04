@@ -17,6 +17,7 @@ class ReceiverState(val mix: MixState) {
     var status = "准备就绪 · 点击开始接收"
     var actual = "等待启动音频输出"
     var diagnostics = "{}"
+    var sources: List<ReceiverSource> = emptyList()
     var sampledAt = 0L
     var marked = "尚未标记闪断"
     var epoch = 0L

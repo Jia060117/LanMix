@@ -164,4 +164,20 @@ class MixerPanelTest {
         assertTrue(f.applied.isEmpty())
         assertEquals(0f, f.mix.master.bands[2]); assertEquals(0f, f.mix.tracks[1].bands[2])
     }
+
+    @Test fun aDiscoveredNameUpdatesTheSelectedEditorWithoutResettingItsGesture() {
+        val f = Fixture()
+        f.click("台式机")
+        val band = descendants(f.panel).filterIsInstance<BandFader>()[2]
+        band.layout(0, 0, 80, 500)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, 250f, 0)
+        try { band.onTouchEvent(down) } finally { down.recycle() }
+        f.panel.setSources(f.sources.map { if (it.slot == 0) it.copy(name = "我的电脑") else it })
+        assertEquals("均衡器 · 我的电脑", descendants(f.panel).filterIsInstance<android.widget.Switch>().single().text)
+        assertTrue(f.applied.isEmpty())
+        val up = MotionEvent.obtain(0, 0, MotionEvent.ACTION_UP, 40f, 80f, 0)
+        try { band.onTouchEvent(up) } finally { up.recycle() }
+        assertTrue(f.mix.tracks[0].bands[2] > 0f)
+        assertEquals("192.168.1.20/1", f.panel.selectedSourceKey)
+    }
 }

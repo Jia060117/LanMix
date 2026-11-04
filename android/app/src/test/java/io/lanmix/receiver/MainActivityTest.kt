@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -15,6 +16,23 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28, 32, 35])
 class MainActivityTest {
+    @Test fun aBoundSourceAppearsWhileTheDiagnosticSnapshotIsStillEmpty() {
+        Robolectric.buildActivity(MainActivity::class.java).use { controller ->
+            val activity = controller.setup().get()
+            val receiver = (activity.application as LanMixApplication).receiver
+            receiver.requested = true
+            receiver.running = true
+            receiver.mix.bindTrack(0, "192.168.1.20", 1)
+            receiver.sources = listOf(ReceiverSource(0, "192.168.1.20", 1, 48000, true))
+            receiver.changed()
+            assertEquals("{}", receiver.diagnostics)
+            val root = activity.window.decorView
+            val chip = descendants(root).filterIsInstance<MixerChip>().single { it.text.toString() == "192.168.1.20" }
+            chip.performClick()
+            assertEquals("192.168.1.20/1", descendants(root).filterIsInstance<MixerPanel>().single().selectedSourceKey)
+        }
+    }
+
     @Test fun opensDrawsAndRecreatesAllPages() {
         Robolectric.buildActivity(MainActivity::class.java).use { controller ->
             val activity = controller.setup().get()

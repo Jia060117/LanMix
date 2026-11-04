@@ -161,6 +161,7 @@ internal class MixerPanel(
     }
 
     private fun updateDescription() {
+        equalizer.setTargetName(currentSource()?.name ?: "整体")
         description.text = currentSource()?.let { "只调整 ${it.name}${if (it.online) "" else " · 离线设置保留"}" } ?: "所有音源一起调整"
         sourceStatus.text = when {
             sources.isEmpty() -> "还没有音源，在「设备」中连接电脑。"

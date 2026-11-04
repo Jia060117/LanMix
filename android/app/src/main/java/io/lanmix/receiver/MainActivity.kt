@@ -46,7 +46,7 @@ class MainActivity : Activity() {
     private lateinit var nearbyStatus: TextView
     private lateinit var receiveAddress: TextView
     private var nearbySignature = ""
-    private val discoveryObserver: () -> Unit = { updateNearby() }
+    private val discoveryObserver: () -> Unit = { updateNearby(); refreshMixerSources() }
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var manager: AudioManager
     private val receiver get() = (application as LanMixApplication).receiver
@@ -82,6 +82,7 @@ class MainActivity : Activity() {
         get() = receiver.marked
         set(value) { receiver.marked = value }
     private var displayedEpoch = -1L
+    private var displayedDiagnostics: String? = null
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateDevices()
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = updateDevices()
@@ -407,24 +408,22 @@ class MainActivity : Activity() {
     private fun updateTracks(json: JSONObject) {
         val tracks = json.optJSONArray("tracks")
         val seen = mutableSetOf<Int>()
-        val mixerSources = mutableListOf<MixerSource>()
         val sourceFormats = mutableMapOf<Int, String>()
+        val sourceNames = mutableMapOf<Int, String>()
         if (tracks != null) repeat(tracks.length()) { i ->
             val item = tracks.getJSONObject(i)
             val slot = item.optInt("slot", -1)
             if (slot !in 0..15) return@repeat
             seen.add(slot)
             val source = item.optString("source")
-            mixerSources.add(MixerSource("$source/${item.optLong("stream_id")}", slot,
-                discovery.nameFor(source) ?: "设备 ${slot + 1}", item.optBoolean("online")))
+            sourceNames[slot] = discovery.nameFor(source) ?: source
             sourceFormats[slot] = "${item.optInt("sample_rate")} Hz · 双声道 PCM float"
         }
-        mixerPanel.setSources(mixerSources)
         val stats = json.optJSONObject("stats") ?: JSONObject()
         val meters = json.optJSONArray("meters")
         bufferHealth.text = if (seen.isEmpty()) "等待音源音频…" else seen.sorted().joinToString("\n") { slot ->
             val meter = meters?.optJSONObject(slot)
-            "${mixerSources.find { it.slot == slot }?.name} · ${sourceFormats[slot]}\n" +
+            "${sourceNames[slot]} · ${sourceFormats[slot]}\n" +
                 "网络 ${String.format(Locale.US, "%.0f", meter?.optDouble("buffered_ms") ?: 0.0)} / 目标 ${meter?.optInt("target_buffer_ms") ?: 0} ms · 缺粮 ${meter?.optLong("underruns") ?: 0} · ${if (meter?.optBoolean("primed") == true) "播放中" else "缓冲中"}"
         }
         var concealed = 0L
@@ -462,19 +461,36 @@ class MainActivity : Activity() {
     }
 
     private fun syncReceiver() {
-        if (!visible || !::status.isInitialized || NativeBridge.loadError != null) return
-        status.text = if (running) "接收中 · 可在后台播放" else receiver.status
+        if (!visible || !::status.isInitialized) return
+        if (displayedEpoch != receiver.epoch) {
+            displayedEpoch = receiver.epoch
+            displayedDiagnostics = null
+            mixerPanel.clearSources()
+        }
+        refreshMixerSources()
+        if (NativeBridge.loadError != null) return
+        status.text = if (running) {
+            val online = receiver.sources.count { it.online }
+            if (online == 0) "接收已就绪 · 等待电脑声音" else "接收中 · $online 个音源 · 可在后台播放"
+        } else receiver.status
         actual.text = receiver.actual
         startButton.text = if (requested) "停止接收" else "开始接收"
         eventHistory.text = history.text()
         navigation.invalidate()
-        if (displayedEpoch != receiver.epoch) {
-            displayedEpoch = receiver.epoch
-            mixerPanel.clearSources()
+        if (running && displayedDiagnostics != latestNativeDiagnostics) runCatching {
+            updateTracks(JSONObject(latestNativeDiagnostics))
+            displayedDiagnostics = latestNativeDiagnostics
         }
-        if (running) runCatching { updateTracks(JSONObject(latestNativeDiagnostics)) }
             .onFailure { networkStats.text = "诊断暂不可用：${it.message}" }
         else if (!requested) mixerPanel.markOffline()
+    }
+
+    private fun refreshMixerSources() {
+        if (!::mixerPanel.isInitialized) return
+        mixerPanel.setSources(receiver.sources.map { source ->
+            MixerSource(source.identity, source.slot, discovery.nameFor(source.address) ?: source.address,
+                requested && source.online)
+        })
     }
 
     private fun updateReceiveAddress() {

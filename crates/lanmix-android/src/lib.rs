@@ -153,6 +153,24 @@ fn tracks() -> Result<String> {
         "master": {"peak": receiver.master.peak(), "clipped_frames": receiver.master.clipped_frames()}}).to_string())
 }
 
+// Control-plane topology only. Frequent source admission must not serialize all
+// meters/loss history or wait for the UI's much slower diagnostic refresh.
+fn sources() -> Result<String> {
+    let state = RECEIVER
+        .lock()
+        .map_err(|_| anyhow!("receiver lock poisoned"))?;
+    let snapshots = state.as_ref().map(Receiver::snapshot).unwrap_or_default();
+    let sources: Vec<_> = snapshots
+        .iter()
+        .map(|source| {
+            serde_json::json!({"slot": source.slot, "source": source.source,
+                "stream_id": source.stream_id, "sample_rate": source.sample_rate,
+                "online": source.online})
+        })
+        .collect();
+    Ok(serde_json::to_string(&sources)?)
+}
+
 fn read_bands(env: &JNIEnv<'_>, array: &JFloatArray<'_>) -> Result<[f32; 10]> {
     ensure!(
         env.get_array_length(array)? == 10,
@@ -281,6 +299,14 @@ pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeTracks(
     _this: JObject<'_>,
 ) -> jstring {
     boundary(&mut env, |env| Ok(env.new_string(tracks()?)?.into_raw()))
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeSources(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+) -> jstring {
+    boundary(&mut env, |env| Ok(env.new_string(sources()?)?.into_raw()))
 }
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
@@ -425,6 +451,7 @@ mod tests {
         stop().unwrap();
         let state: serde_json::Value = serde_json::from_str(&tracks().unwrap()).unwrap();
         assert_eq!(state["running"], false);
+        assert_eq!(sources().unwrap(), "[]");
         assert!(fill(2048, |_| Ok(())).is_err());
     }
 }

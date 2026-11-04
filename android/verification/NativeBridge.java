@@ -14,6 +14,7 @@ public final class NativeBridge {
     public native void nativeStop();
     public native void nativeFill(float[] output);
     public native String nativeTracks();
+    public native String nativeSources();
     public native void nativeSetTrack(int index, float gain, boolean mute, boolean solo,
         boolean enabled, float preamp, float[] bands);
     public native void nativeSetMaster(float gain, boolean enabled, float preamp, float[] bands);
@@ -82,10 +83,56 @@ public final class NativeBridge {
         }
         Thread.sleep(100);
     }
+
+    static void sourceAdmission(NativeBridge bridge) throws Exception {
+        int port;
+        try (DatagramSocket reservation = new DatagramSocket(0)) { port = reservation.getLocalPort(); }
+        bridge.nativeStart(port, 150, 48000);
+        try (DatagramSocket sender = new DatagramSocket()) {
+            float[] output = new float[960];
+            bridge.nativeFill(output);
+            bridge.nativeSetMaster(0f, false, 0f, new float[10]);
+            long start = System.nanoTime(), nextPacket = start, nextFill = start, nextSources = start;
+            long sourceMs = -1, soundMs = -1;
+            int sequence = 0;
+            while (System.nanoTime() - start < 2_000_000_000L && soundMs < 0) {
+                long now = System.nanoTime();
+                if (now >= nextPacket) {
+                    byte[] bytes = packet(sequence++);
+                    sender.send(new DatagramPacket(bytes, bytes.length, InetAddress.getLoopbackAddress(), port));
+                    nextPacket += 3_000_000L;
+                }
+                if (now >= nextSources) {
+                    String sources = bridge.nativeSources();
+                    require(!sources.contains("meters") && !sources.contains("packets"), "lightweight topology excludes diagnostics");
+                    if (sourceMs < 0 && sources.contains("\"stream_id\":7")) {
+                        require(sources.contains("\"source\":\"127.0.0.1\"") && sources.contains("\"sample_rate\":48000"), "source identity/format cross JNI");
+                        bridge.nativeSetTrack(0, -3f, false, false, false, 0f, new float[10]);
+                        sourceMs = (System.nanoTime() - start) / 1_000_000L;
+                    }
+                    nextSources = now + 50_000_000L;
+                }
+                if (now >= nextFill) {
+                    bridge.nativeFill(output);
+                    for (float sample : output) {
+                        require(Float.isFinite(sample), "admission finite PCM");
+                        if (Math.abs(sample) > .001f) { soundMs = (System.nanoTime() - start) / 1_000_000L; break; }
+                    }
+                    nextFill = now + 10_000_000L;
+                }
+                Thread.sleep(1);
+            }
+            require(sourceMs >= 0 && soundMs >= sourceMs, "source admission opens saved controls without any nativeTracks call");
+            System.out.println("JNI source admission: source=" + sourceMs + " ms, rendered sound=" + soundMs
+                + " ms at 150 ms network buffer; no diagnostic reads (host simulation, not device latency)");
+        } finally { bridge.nativeStop(); }
+        require(bridge.nativeSources().equals("[]"), "stopped source topology");
+    }
     public static void main(String[] args) throws Exception {
         System.load(args[0]);
         NativeBridge bridge = new NativeBridge();
         discovery(bridge);
+        sourceAdmission(bridge);
         bridge.nativeStop(); bridge.nativeStop();
         require(bridge.nativeTracks().contains("\"running\":false"), "stopped JSON");
         rejected(() -> bridge.nativeStart(0, 60, 48000));
@@ -132,6 +179,7 @@ public final class NativeBridge {
                 try {
                     for (int i = 0; i < 100; i++) {
                         require(bridge.nativeTracks().contains("\"running\":true"), "running JSON");
+                        require(bridge.nativeSources().contains("\"stream_id\":7"), "concurrent source topology");
                         bridge.nativeSetMaster(-6f, i % 2 == 0, 0f, new float[10]);
                     }
                 } catch (Throwable e) { failure.set(e); }
@@ -230,6 +278,6 @@ public final class NativeBridge {
                 require(Arrays.equals(block, new float[block.length]), "10 ms fill at " + rate);
             } finally { bridge.nativeStop(); }
         }
-        System.out.println("JNI lifecycle, array validation, JSON, all eleven exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
+        System.out.println("JNI lifecycle, array validation, JSON, all twelve exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
     }
 }

@@ -38,6 +38,7 @@ class ReceiverService : Service() {
     private lateinit var manager: AudioManager
     private lateinit var engine: PlaybackEngine
     private lateinit var bindings: SourceControlBinder
+    private lateinit var sources: SourceControlPump
     private var wakeLock: PowerManager.WakeLock? = null
     private var renewWakeAt = 0L
     private var lastStartId = 0
@@ -68,7 +69,6 @@ class ReceiverService : Service() {
                     if (tracks != null) repeat(tracks.length()) { index ->
                         val source = tracks.getJSONObject(index)
                         val slot = source.optInt("slot", -1)
-                        bindings.source(slot, source.optString("source"), source.optLong("stream_id"))
                         val identity = "${source.optString("source")}/${source.optLong("stream_id")}"
                         seen.add(identity)
                         val meter = json.optJSONArray("meters")?.optJSONObject(slot)
@@ -105,13 +105,23 @@ class ReceiverService : Service() {
         })
         bindings = SourceControlBinder(state.mix::resetBindings, state.mix::applyMaster,
             state.mix::bindTrack, state.mix::applyTrack)
+        sources = SourceControlPump(handler, NativeBridge::nativeSources, bindings::source, { next ->
+            state.sources = next
+            state.changed()
+        }, { error -> state.event("音源接入暂不可用：${error.message}") })
         engine = PlaybackEngine(manager,
             onStatus = { message, active ->
                 state.running = active
                 state.status = message
                 if (!active) state.requested = false
                 state.changed()
-                if (active) updateNotification() else finishReceiving()
+                if (active) {
+                    sources.start()
+                    handler.removeCallbacks(poll)
+                    handler.post(poll)
+                    (application as LanMixApplication).discovery.receiverReady()
+                    updateNotification()
+                } else finishReceiving()
             },
             onActual = { state.actual = it; state.changed() },
             onReady = {
@@ -119,6 +129,7 @@ class ReceiverService : Service() {
                 sourceDiagnostics.clear()
                 state.epoch++
                 state.diagnostics = "{}"
+                state.sources = emptyList()
                 state.event("后台混音已就绪 · 共享播放，不申请音频焦点")
             },
             onEvent = { state.event(it); state.changed() }
@@ -135,6 +146,7 @@ class ReceiverService : Service() {
             state.status = "正在停止接收…"
             state.event("用户停止后台接收")
             handler.removeCallbacks(poll)
+            sources.stop()
             state.changed()
             updateNotification()
             engine.stop() // foreground and wake lock stay until the writer has stopped
@@ -179,6 +191,7 @@ class ReceiverService : Service() {
     }
 
     private fun begin(settings: ReceiverSettings, reason: String) {
+        sources.stop()
         (application as LanMixApplication).discovery.service(true)
         state.config = settings
         state.requested = true
@@ -224,6 +237,7 @@ class ReceiverService : Service() {
     private fun finishReceiving() {
         (application as LanMixApplication).discovery.service(false)
         handler.removeCallbacks(poll)
+        sources.stop()
         state.mix.save()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
@@ -246,6 +260,7 @@ class ReceiverService : Service() {
         destroyed = true
         (application as LanMixApplication).discovery.service(false)
         handler.removeCallbacksAndMessages(null)
+        sources.stop()
         manager.unregisterAudioDeviceCallback(devices)
         engine.close()
         state.mix.save()

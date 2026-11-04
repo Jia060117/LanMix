@@ -129,10 +129,12 @@ internal class EqualizerView(
         editOrigin = null
         faders.forEach { it.cancelInteraction() }
         control = value
-        enabledSwitch.text = "均衡器 · $target"
+        setTargetName(target)
         advanced.visibility = GONE
         render(false)
     }
+
+    fun setTargetName(target: String) { enabledSwitch.text = "均衡器 · $target" }
 
     private fun render(animate: Boolean) {
         faders.forEachIndexed { index, fader -> fader.setValue(control.bands[index], animate) }

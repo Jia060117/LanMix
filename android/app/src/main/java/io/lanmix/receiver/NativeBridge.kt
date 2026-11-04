@@ -14,6 +14,8 @@ object NativeBridge {
     external fun nativeFill(array: FloatArray)
     /** JSON object: {tracks: TrackSnapshot[], stats: NetworkStats}. */
     external fun nativeTracks(): String
+    /** Lightweight source topology; no meters or diagnostic history. */
+    external fun nativeSources(): String
     external fun nativeSetTrack(index: Int, gainDb: Float, mute: Boolean, solo: Boolean,
         eqEnabled: Boolean, preampDb: Float, bands: FloatArray)
     external fun nativeSetMaster(gainDb: Float, eqEnabled: Boolean, preampDb: Float, bands: FloatArray)

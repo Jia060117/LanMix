@@ -1,5 +1,18 @@
 # Verified Android build
 
+## 1.0.2 source admission · 2026-11-04
+
+- Package `io.lanmix.receiver`, **1.0.2 / version code 12**, minimum API 26 / target 37, non-debuggable release.
+- Local artifact: `dist/android/LanMix-1.0.2.apk`, **2,169,229 bytes**. Published GitHub Release remains v1.0.0.
+- SHA-256: `9760a774fd97ef736434ad33f40e02fa36d91cce15d678cf0e399a6fdd7e3511`.
+- Full ARM64/ARMv7 JNI rebuild, followed by final `-SkipNative -Release -Offline` verification. Debug / Release each passed **77 Kotlin tests**; assembly and lint passed with **38 / 37 warnings, 0 errors**.
+- New lightweight `nativeSources` export separates 50 ms source admission from 750 ms diagnostic refreshes. The service restores saved controls before publishing topology. Pending discovery connections run immediately on receiver readiness; IP/name changes no longer wait for diagnostic JSON.
+- Regressions cover an actual Activity showing a source while diagnostics remain `{}`, saved settings before publication, retry/cancel/restart, unchanged topology avoiding repeated parameter writes, immediate ready-to-connect behavior, and discovered names preserving the active EQ gesture.
+- Rust formatting, strict `lanmix-android` Clippy and lifecycle tests passed. Host JVM `-Xcheck:jni` passed all **12 exports**, actual UDP discovery, source admission, concurrent controls/topology/diagnostics, lost-packet repair and 8/44.1/48/96/192 kHz fills.
+- Final host admission experiment: source observed at **51 ms**, non-silent rendered PCM at **161 ms**, retaining a 150 ms network buffer and making **no full diagnostic reads**. This is a host scheduling/PCM experiment, not Android/AudioTrack/Bluetooth end-to-end latency.
+- Same Jia060117 certificate (`d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`), valid APK v2 signature; permits in-place updates of official 1.0.0/1.0.1. ZIP and both ABI ELF LOAD segments satisfy 16 KiB alignment. Packaged JNI libraries match Gradle stripped outputs and contain the new export.
+- All seven license/dependency assets remain byte-identical to 1.0.1. PCM, DSP, network buffer defaults and the AudioTrack writer are unchanged. No phone is attached; physical upgrade, listening and startup responsiveness still need device validation.
+
 ## 1.0.1 tuning UI · 2026-11-02
 
 - Package `io.lanmix.receiver`, **1.0.1 / version code 11**, minimum API 26 / target 37, non-debuggable release.
