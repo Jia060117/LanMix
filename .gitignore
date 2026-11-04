@@ -12,4 +12,5 @@ __pycache__/
 /android/app/generated/
 *.jks
 *.keystore
+AGENTS.md
 
