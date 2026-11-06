@@ -56,9 +56,29 @@ public final class NativeBridge {
                 connected = message.contains("\"kind\":\"connect\"") && message.contains("\"target\":\"" + senderId + "\"");
             }
             require(connected, "JNI receiver-to-sender connect request");
+            String session = hello.substring(0, hello.length() - 1).replace("\"kind\":\"hello\"", "\"kind\":\"session\"")
+                + ",\"target\":\"" + receiverId + "\",\"session\":{\"state\":\"connected\",\"stream_id\":1,\"revision\":1}}";
+            bytes = session.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
+            deadline = System.nanoTime() + 2_000_000_000L;
+            while (!bridge.nativeDiscoverySnapshot().contains("\"state\":\"connected\"")) {
+                require(System.nanoTime() < deadline, "silent session crosses JNI without PCM"); Thread.sleep(20);
+            }
+            require(bridge.nativeSources().equals("[]"), "session does not fabricate an audio source");
+            bytes = session.replace("\"connected\"", "\"disconnected\"").replace("\"revision\":1", "\"revision\":2")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
+            deadline = System.nanoTime() + 2_000_000_000L;
+            while (!bridge.nativeDiscoverySnapshot().contains("\"sessions\":[]")) {
+                require(System.nanoTime() < deadline, "silent disconnect crosses JNI"); Thread.sleep(20);
+            }
+            bytes = session.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
+            Thread.sleep(100);
+            require(bridge.nativeDiscoverySnapshot().contains("\"sessions\":[]"), "late session cannot revive disconnected UI");
         } finally { bridge.nativeDiscoveryStop(); }
         require(bridge.nativeDiscoverySnapshot().contains("\"peers\":[]"), "discovery worker released");
-        System.out.println("JNI discovery: identity/update, actual UDP probe/reply, snapshot, connect and stop passed");
+        System.out.println("JNI discovery: identity/update, UDP probe/reply, connect, silent session/disconnect, revision ordering and stop passed");
     }
 
     static void require(boolean condition, String message) {

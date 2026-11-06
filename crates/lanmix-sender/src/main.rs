@@ -122,8 +122,14 @@ fn main() -> Result<()> {
             repair_ms,
             seconds,
         }) => {
-            let _presence = presence();
-            send(
+            let presence = presence();
+            announce(
+                &presence,
+                to,
+                stream_id,
+                lanmix_discovery::SessionState::Connecting,
+            );
+            let result = send_observed(
                 CaptureOptions {
                     to,
                     output,
@@ -134,7 +140,22 @@ fn main() -> Result<()> {
                     seconds,
                 },
                 stop_flag()?,
-            )
+                || {
+                    announce(
+                        &presence,
+                        to,
+                        stream_id,
+                        lanmix_discovery::SessionState::Connected,
+                    )
+                },
+            );
+            announce(
+                &presence,
+                to,
+                stream_id,
+                lanmix_discovery::SessionState::Disconnected,
+            );
+            result
         }
         Some(Command::Tone {
             to,
@@ -167,6 +188,16 @@ fn presence() -> Option<lanmix_discovery::Discovery> {
         .and_then(lanmix_discovery::Discovery::start)
         .map_err(|e| eprintln!("Automatic discovery unavailable (audio can continue): {e:#}"))
         .ok()
+}
+fn announce(
+    discovery: &Option<lanmix_discovery::Discovery>,
+    to: SocketAddr,
+    stream: u32,
+    state: lanmix_discovery::SessionState,
+) {
+    if let Some(discovery) = discovery {
+        let _ = discovery.announce_session(to, stream, state);
+    }
 }
 
 fn list_devices() -> Result<()> {
@@ -227,7 +258,11 @@ struct CaptureOptions {
     repair_ms: u32,
     seconds: u64,
 }
-fn send(options: CaptureOptions, running: Arc<AtomicBool>) -> Result<()> {
+fn send_observed(
+    options: CaptureOptions,
+    running: Arc<AtomicBool>,
+    ready: impl FnOnce(),
+) -> Result<()> {
     let CaptureOptions {
         to,
         output,
@@ -305,6 +340,7 @@ fn send(options: CaptureOptions, running: Arc<AtomicBool>) -> Result<()> {
     };
     let socket = socket(to)?;
     stream.play()?;
+    ready();
     let mut packet = [0u8; MAX_DATAGRAM_BYTES];
     let mut frames = [[0.0; 2]; (MAX_DATAGRAM_BYTES - 40) / 8];
     let mut filled = 0;

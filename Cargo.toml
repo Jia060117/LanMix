@@ -14,7 +14,7 @@ default-members = ["crates/lanmix-sender", "crates/lanmix-receiver"]
 exclude = ["vendor/cpal"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"

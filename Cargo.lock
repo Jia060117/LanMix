@@ -1313,7 +1313,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "lanmix-android"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "jni 0.21.1",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "lanmix-audio"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "cpal",
@@ -1336,14 +1336,14 @@ dependencies = [
 
 [[package]]
 name = "lanmix-core"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "rtrb",
 ]
 
 [[package]]
 name = "lanmix-discovery"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "lanmix-network"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "lanmix-core",
@@ -1367,11 +1367,11 @@ dependencies = [
 
 [[package]]
 name = "lanmix-proto"
-version = "1.0.0"
+version = "1.0.3"
 
 [[package]]
 name = "lanmix-receiver"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "lanmix-sender"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1396,6 +1396,7 @@ dependencies = [
  "lanmix-discovery",
  "lanmix-proto",
  "rtrb",
+ "serde",
  "serde_json",
  "windows-sys 0.61.2",
 ]

@@ -1,5 +1,16 @@
 # Verified Android build
 
+## 1.0.3 connection feedback · 2026-11-06
+
+- Package `io.lanmix.receiver`, **1.0.3 / version code 13**, minimum API 26 / target 37, non-debuggable release.
+- Local artifact: `dist/android/LanMix-1.0.3.apk`, **2,219,273 bytes**. This iteration does not create or replace a GitHub Release.
+- SHA-256: `f40104fdfd60caec92db5d174c68df978bd8e4ec876d1af4b6ad4863c48b06b8`.
+- Both ARM64/ARMv7 JNI libraries rebuilt. Debug / Release each passed **84 Kotlin tests**, assembly and lint; **38 / 37 warnings, 0 errors**. No new dependency or audio DSP/PCM/AudioTrack policy change.
+- Session notices cross the existing discovery snapshot JNI export. Home shows a named pending connection immediately, confirms capture readiness even without PCM, and merges received sources into the same device status. Repeat taps, timeout, service stop, legacy senders and multiple stream IDs have regression coverage.
+- Actual UDP Rust tests cover silent session/disconnect, receiver isolation, rapid target switching, stale revision rejection and goodbye cleanup. Host JVM `-Xcheck:jni` verifies silent session/disconnect snapshots without fabricating native audio sources, all 12 exports and existing PCM/control lifecycle checks.
+- APK v2 signature and 16 KiB ZIP alignment pass. Same publisher certificate SHA-256: `d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`; official signed installations can update in place. Dual ABI and version verified with aapt2.
+- Per user preference, no Windows UI or phone interactions performed. Actual tray behavior, Android connection feedback, upgrade and listening acceptance remain for the user to test.
+
 ## 1.0.2 source admission · 2026-11-04
 
 - Package `io.lanmix.receiver`, **1.0.2 / version code 12**, minimum API 26 / target 37, non-debuggable release.

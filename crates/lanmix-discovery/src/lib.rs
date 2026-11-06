@@ -92,7 +92,31 @@ pub struct ConnectRequest {
 #[derive(Clone, Default, Serialize)]
 pub struct Snapshot {
     pub peers: Vec<Peer>,
+    pub sessions: Vec<SessionPeer>,
     pub error: Option<String>,
+}
+
+/// Control-plane state, independent of whether loopback is producing PCM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionState {
+    Connecting,
+    Connected,
+    Disconnected,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionPeer {
+    #[serde(flatten)]
+    pub peer: Peer,
+    pub state: SessionState,
+    pub stream_id: u32,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionNotice {
+    state: SessionState,
+    stream_id: u32,
+    revision: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -106,6 +130,8 @@ struct Message {
     target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     request: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<SessionNotice>,
 }
 impl Message {
     fn new(kind: &str, peer: Identity) -> Self {
@@ -116,6 +142,7 @@ impl Message {
             peer,
             target: None,
             request: None,
+            session: None,
         }
     }
     fn decode(bytes: &[u8]) -> Option<Self> {
@@ -126,7 +153,12 @@ impl Message {
         (m.magic == "LMXD"
             && m.protocol == 1
             && m.peer.valid()
-            && matches!(m.kind.as_str(), "probe" | "hello" | "connect" | "bye")
+            && matches!(
+                m.kind.as_str(),
+                "probe" | "hello" | "connect" | "bye" | "session"
+            )
+            && ((m.kind == "session") == m.session.is_some())
+            && (m.kind != "session" || (m.target.is_some() && m.peer.role == Role::Sender))
             && m.target.as_ref().is_none_or(|s| valid_id(s))
             && m.request.as_ref().is_none_or(|s| valid_id(s)))
         .then_some(m)
@@ -136,6 +168,7 @@ enum Command {
     Identity(Identity),
     Probe(SocketAddr),
     Connect(String, String),
+    Session(SocketAddr, u32, SessionState),
 }
 struct Seen {
     peer: Peer,
@@ -221,6 +254,20 @@ impl Discovery {
             .try_send(Command::Connect(id.into(), random_id()?))
             .context("discovery busy")
     }
+    pub fn announce_session(
+        &self,
+        receiver: SocketAddr,
+        stream_id: u32,
+        state: SessionState,
+    ) -> Result<()> {
+        ensure!(
+            receiver.is_ipv4() && receiver.port() != 0,
+            "session requires an IPv4 audio endpoint"
+        );
+        self.tx
+            .try_send(Command::Session(receiver, stream_id, state))
+            .context("discovery busy")
+    }
 }
 impl Drop for Discovery {
     fn drop(&mut self) {
@@ -264,12 +311,46 @@ fn run(
     let mut pending: Vec<(Message, SocketAddr, Instant, u8)> = Vec::new();
     let mut last = Instant::now() - HEARTBEAT;
     let mut buffer = [0; LIMIT + 1];
+    let mut outgoing: Option<(SocketAddr, SessionNotice)> = None;
+    let mut incoming: HashMap<String, (SessionPeer, u64, Instant)> = HashMap::new();
+    let mut revision = 0u64;
     while !stop.load(Ordering::Acquire) {
         for command in rx.try_iter().take(32) {
             match command {
                 Command::Identity(next) => {
                     identity = next;
+                    if !identity.ready {
+                        incoming.clear();
+                    }
                     last = Instant::now() - HEARTBEAT;
+                }
+                Command::Session(address, stream_id, state) => {
+                    if identity.role == Role::Sender {
+                        revision = revision.saturating_add(1);
+                        outgoing = Some((
+                            address,
+                            SessionNotice {
+                                state,
+                                stream_id,
+                                revision,
+                            },
+                        ));
+                        // Retry transitions independently of the next session. A quick
+                        // disconnect/reconnect must not leave the old receiver connected.
+                        for peer in seen.values() {
+                            if let Some(message) = session_message(&identity, &outgoing, &peer.peer)
+                                && pending.len() < 16
+                            {
+                                pending.push((message, peer.peer.address, Instant::now(), 0));
+                            }
+                        }
+                        let _ = send(
+                            &direct,
+                            &Message::new("probe", identity.clone()),
+                            (address.ip(), port).into(),
+                        );
+                        last = Instant::now() - HEARTBEAT;
+                    }
                 }
                 Command::Probe(address) => {
                     let _ = send(&direct, &Message::new("probe", identity.clone()), address);
@@ -307,6 +388,7 @@ fn run(
                     &Message::new("hello", identity.clone()),
                     peer.peer.address,
                 );
+                announce(&direct, &identity, &outgoing, &peer.peer);
             }
             last = Instant::now();
         }
@@ -341,6 +423,7 @@ fn run(
                 }
                 if message.kind == "bye" {
                     seen.remove(&message.peer.id);
+                    incoming.remove(&message.peer.id);
                     continue;
                 }
                 if !seen.contains_key(&message.peer.id) && seen.len() >= 64 {
@@ -359,6 +442,31 @@ fn run(
                 );
                 if message.kind == "probe" {
                     let _ = send(&direct, &Message::new("hello", identity.clone()), address);
+                }
+                if matches!(message.kind.as_str(), "probe" | "hello") {
+                    announce(&direct, &identity, &outgoing, &peer);
+                }
+                if message.kind == "session"
+                    && identity.role == Role::Receiver
+                    && identity.ready
+                    && message.target.as_deref() == Some(&identity.id)
+                    && let Some(notice) = message.session
+                    && incoming
+                        .get(&peer.identity.id)
+                        .is_none_or(|(_, revision, _)| notice.revision >= *revision)
+                {
+                    incoming.insert(
+                        peer.identity.id.clone(),
+                        (
+                            SessionPeer {
+                                peer: peer.clone(),
+                                state: notice.state,
+                                stream_id: notice.stream_id,
+                            },
+                            notice.revision,
+                            Instant::now(),
+                        ),
+                    );
                 }
                 if message.kind == "connect"
                     && identity.role == Role::Sender
@@ -381,6 +489,7 @@ fn run(
             }
         }
         seen.retain(|_, peer| peer.at.elapsed() < PEER_TTL);
+        incoming.retain(|id, (_, _, at)| seen.contains_key(id) && at.elapsed() < PEER_TTL);
         requests.retain(|(_, at)| at.elapsed() < Duration::from_secs(10));
         let mut peers: Vec<_> = seen.values().map(|p| p.peer.clone()).collect();
         peers.sort_by(|a, b| {
@@ -389,13 +498,50 @@ fn run(
                 .cmp(&b.identity.name)
                 .then(a.identity.id.cmp(&b.identity.id))
         });
-        shared.lock().unwrap().snapshot.peers = peers;
+        let mut sessions: Vec<_> = incoming
+            .values()
+            .filter(|(session, _, _)| session.state != SessionState::Disconnected)
+            .map(|(session, _, _)| session.clone())
+            .collect();
+        sessions.sort_by(|a, b| a.peer.identity.id.cmp(&b.peer.identity.id));
+        let mut state = shared.lock().unwrap();
+        state.snapshot.peers = peers;
+        state.snapshot.sessions = sessions;
+        drop(state);
         thread::sleep(Duration::from_millis(30));
     }
     let message = Message::new("bye", identity);
     for peer in seen.values() {
         let _ = send(&direct, &message, peer.peer.address);
     }
+}
+
+fn announce(
+    socket: &UdpSocket,
+    identity: &Identity,
+    outgoing: &Option<(SocketAddr, SessionNotice)>,
+    peer: &Peer,
+) {
+    if let Some(message) = session_message(identity, outgoing, peer) {
+        let _ = send(socket, &message, peer.address);
+    }
+}
+
+fn session_message(
+    identity: &Identity,
+    outgoing: &Option<(SocketAddr, SessionNotice)>,
+    peer: &Peer,
+) -> Option<Message> {
+    if let Some((address, notice)) = outgoing
+        && peer.identity.role == Role::Receiver
+        && peer.audio_address() == *address
+    {
+        let mut message = Message::new("session", identity.clone());
+        message.target = Some(peer.identity.id.clone());
+        message.session = Some(notice.clone());
+        return Some(message);
+    }
+    None
 }
 
 #[cfg(test)]
@@ -469,6 +615,89 @@ mod tests {
             .unwrap();
         thread::sleep(Duration::from_millis(800));
         assert!(sender.take_requests().is_empty());
+    }
+    #[test]
+    fn silent_session_is_visible_without_pcm_and_disconnects() {
+        let sender = Discovery::start_on(identity(Role::Sender), 0).unwrap();
+        let receiver = Discovery::start_on(identity(Role::Receiver), 0).unwrap();
+        let mut other_identity = identity(Role::Receiver);
+        other_identity.audio_port = 46212;
+        let other = Discovery::start_on(other_identity, 0).unwrap();
+        for listener in [&receiver, &other] {
+            listener
+                .probe((Ipv4Addr::LOCALHOST, sender.local_addr().port()).into())
+                .unwrap();
+        }
+        wait(|| sender.snapshot().peers.len() == 2);
+        let destination = (Ipv4Addr::LOCALHOST, 46210).into();
+        // Distinct audio endpoints are required to distinguish two receivers on one host.
+        sender
+            .announce_session(destination, 7, SessionState::Connecting)
+            .unwrap();
+        wait(|| receiver.snapshot().sessions.len() == 1);
+        assert_eq!(
+            receiver.snapshot().sessions[0].state,
+            SessionState::Connecting
+        );
+        sender
+            .announce_session(destination, 7, SessionState::Connected)
+            .unwrap();
+        wait(|| receiver.snapshot().sessions[0].state == SessionState::Connected);
+        assert_eq!(receiver.snapshot().sessions[0].stream_id, 7);
+        assert!(other.snapshot().sessions.is_empty());
+        sender
+            .announce_session(destination, 7, SessionState::Disconnected)
+            .unwrap();
+        wait(|| receiver.snapshot().sessions.is_empty());
+        sender
+            .announce_session(destination, 7, SessionState::Connected)
+            .unwrap();
+        wait(|| !receiver.snapshot().sessions.is_empty());
+        sender
+            .announce_session(destination, 7, SessionState::Disconnected)
+            .unwrap();
+        sender
+            .announce_session(
+                (Ipv4Addr::LOCALHOST, 46212).into(),
+                7,
+                SessionState::Connected,
+            )
+            .unwrap();
+        wait(|| receiver.snapshot().sessions.is_empty() && !other.snapshot().sessions.is_empty());
+        drop(sender);
+        wait(|| other.snapshot().sessions.is_empty());
+    }
+    #[test]
+    fn session_notices_reject_wrong_target_and_older_revision() {
+        let id = identity(Role::Receiver);
+        let receiver = Discovery::start_on(id.clone(), 0).unwrap();
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let target = (Ipv4Addr::LOCALHOST, receiver.local_addr().port()).into();
+        let mut message = Message::new("session", identity(Role::Sender));
+        message.target = Some(random_id().unwrap());
+        message.session = Some(SessionNotice {
+            state: SessionState::Connected,
+            stream_id: 1,
+            revision: 2,
+        });
+        send(&socket, &message, target).unwrap();
+        wait(|| !receiver.snapshot().peers.is_empty());
+        assert!(receiver.snapshot().sessions.is_empty());
+        message.target = Some(id.id);
+        send(&socket, &message, target).unwrap();
+        wait(|| !receiver.snapshot().sessions.is_empty());
+        message.session.as_mut().unwrap().state = SessionState::Disconnected;
+        message.session.as_mut().unwrap().revision = 3;
+        send(&socket, &message, target).unwrap();
+        wait(|| receiver.snapshot().sessions.is_empty());
+        message.session.as_mut().unwrap().state = SessionState::Connected;
+        message.session.as_mut().unwrap().revision = 2;
+        send(&socket, &message, target).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            receiver.snapshot().sessions.is_empty(),
+            "late datagram must not revive a closed session"
+        );
     }
     #[test]
     fn stale_peer_expires_and_malformed_requests_cannot_queue_capture() {

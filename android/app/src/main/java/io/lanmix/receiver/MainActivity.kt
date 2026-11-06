@@ -46,7 +46,7 @@ class MainActivity : Activity() {
     private lateinit var nearbyStatus: TextView
     private lateinit var receiveAddress: TextView
     private var nearbySignature = ""
-    private val discoveryObserver: () -> Unit = { updateNearby(); refreshMixerSources() }
+    private val discoveryObserver: () -> Unit = { updateNearby(); syncReceiver() }
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var manager: AudioManager
     private val receiver get() = (application as LanMixApplication).receiver
@@ -63,6 +63,8 @@ class MainActivity : Activity() {
     private lateinit var port: EditText
     private lateinit var buffer: EditText
     private lateinit var startButton: Button
+    private lateinit var connectedDevices: LinearLayout
+    private var connectionSignature = ""
     private lateinit var mixerPanel: MixerPanel
     private var devices = emptyList<AudioDeviceInfo>()
     private var selectedId: Int? = null
@@ -197,6 +199,9 @@ class MainActivity : Activity() {
         }
         val connection = card(home, "声音入口")
         status = text("准备就绪", 15, accent, true); connection.addView(status)
+        status.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        connectedDevices = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        connection.addView(connectedDevices)
         startButton = button("开始接收", true) { if (requested) stopReceiver("用户点击停止") else requestReceiverStart() }
         connection.addView(startButton)
         connection.addView(text("切走页面，声音也会继续。", 12, subtle))
@@ -303,17 +308,18 @@ class MainActivity : Activity() {
     private fun updateNearby() {
         if (!::nearby.isInitialized) return
         nearbyStatus.text = discovery.status
-        val signature = discovery.devices.joinToString { "${it.id}/${it.name}/${it.ready}/${it.address}" }
+        val signature = discovery.devices.joinToString { "${it.id}/${it.name}/${it.ready}/${it.address}" } + discovery.connections.toString()
         if (signature == nearbySignature && nearby.childCount != 0) return
         nearbySignature = signature; nearby.removeAllViews()
         if (discovery.devices.isEmpty()) nearby.addView(text("还没有发现设备\n在电脑打开 LanMix，稍等片刻即可出现。", 14, subtle))
         discovery.devices.forEach { device ->
+            val connection = discovery.connections.find { it.id == device.id }
             val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(12), 0, dp(10)) }
             row.addView(text(device.name, 17, ink, true))
-            row.addView(text("${if (device.role == "sender") "电脑 · 发送端" else "接收端"} · ${device.address.substringBeforeLast(':')} · ${if (device.ready) "可连接" else "待命或使用中"}", 12, subtle))
-            if (device.role == "sender") row.addView(button(if (device.ready) "连接并接收" else "暂不可连接", device.ready) {
+            row.addView(text("${if (device.role == "sender") "电脑 · 发送端" else "接收端"} · ${device.address.substringBeforeLast(':')} · ${if (connection?.connected == true) "已连接" else if (connection != null) "正在连接…" else if (device.ready) "可连接" else "待命或使用中"}", 12, subtle))
+            if (device.role == "sender") row.addView(button(if (connection?.connected == true) "已连接" else if (connection != null) "正在连接…" else if (device.ready) "连接并接收" else "暂不可连接", device.ready && connection == null) {
                 discovery.connect(device); if (!requested) requestReceiverStart(); showPage(0)
-            }.apply { isEnabled = device.ready })
+            }.apply { isEnabled = device.ready && connection == null; alpha = if (isEnabled) 1f else .6f })
             nearby.addView(row)
         }
         navigation.invalidate()
@@ -468,10 +474,14 @@ class MainActivity : Activity() {
             mixerPanel.clearSources()
         }
         refreshMixerSources()
+        updateConnections()
         if (NativeBridge.loadError != null) return
         status.text = if (running) {
             val online = receiver.sources.count { it.online }
-            if (online == 0) "接收已就绪 · 等待电脑声音" else "接收中 · $online 个音源 · 可在后台播放"
+            if (online > 0) "接收中 · $online 个音源 · 可在后台播放"
+            else if (discovery.connections.any { it.connected }) "设备已连接 · 等待电脑声音"
+            else if (discovery.connections.isNotEmpty()) "正在连接设备…"
+            else "接收已就绪 · 等待电脑声音"
         } else receiver.status
         actual.text = receiver.actual
         startButton.text = if (requested) "停止接收" else "开始接收"
@@ -491,6 +501,31 @@ class MainActivity : Activity() {
             MixerSource(source.identity, source.slot, discovery.nameFor(source.address) ?: source.address,
                 requested && source.online)
         })
+    }
+
+    private fun updateConnections() {
+        if (!::connectedDevices.isInitialized) return
+        val rows = connectionRows(discovery.connections, if (running) receiver.sources else emptyList(), discovery::nameFor)
+        val signature = rows.toString()
+        if (signature == connectionSignature) return
+        connectionSignature = signature
+        connectedDevices.removeAllViews()
+        connectedDevices.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+        rows.forEach { row ->
+            connectedDevices.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = GradientDrawable().apply {
+                    setColor(if (dark) 0xFF26354B.toInt() else 0xFFEDF2FF.toInt()); cornerRadius = dp(12).toFloat()
+                }
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
+                addView(text(row.name, 14, ink, true))
+                addView(text(row.detail, 12, accent))
+                if (android.animation.ValueAnimator.areAnimatorsEnabled() && visible) {
+                    alpha = .5f; animate().alpha(1f).setDuration(160).start()
+                }
+            })
+        }
     }
 
     private fun updateReceiveAddress() {

@@ -13,6 +13,9 @@ import java.util.UUID
 data class NearbyDevice(val id: String, val name: String, val role: String,
     val address: String, val port: Int, val ready: Boolean)
 
+data class DeviceConnection(val id: String, val name: String, val address: String,
+    val streamId: Long, val connected: Boolean)
+
 interface DiscoveryBackend {
     val loadError: String?
     fun update(identity: String)
@@ -44,6 +47,8 @@ class DiscoveryController(private val context: Context, private val receiver: Re
     private var identity = ""
     private val observers = mutableSetOf<() -> Unit>()
     var devices: List<NearbyDevice> = emptyList(); private set
+    var connections: List<DeviceConnection> = emptyList(); private set
+    private val requested = mutableMapOf<String, Pair<NearbyDevice, Long>>()
     var status = "正在发现局域网设备…"; private set
     private var noticeUntil = 0L
     private fun notice(message: String) {
@@ -53,7 +58,7 @@ class DiscoveryController(private val context: Context, private val receiver: Re
         override fun run() {
             if (!owned()) return
             refresh()
-            if (owned()) handler.postDelayed(this, 1000) else reconcile()
+            if (owned()) handler.postDelayed(this, 200) else reconcile()
         }
     }
     // Keep an explicit in-flight connection across Activity recreation/start-service handoff.
@@ -62,7 +67,11 @@ class DiscoveryController(private val context: Context, private val receiver: Re
     fun observe(observer: () -> Unit) { observers.add(observer); observer() }
     fun removeObserver(observer: () -> Unit) { observers.remove(observer) }
     fun screen(visible: Boolean) { lease.screen = visible; reconcile() }
-    fun service(running: Boolean) { lease.service = running; reconcile() }
+    fun service(running: Boolean) {
+        lease.service = running
+        if (!running) { requested.clear(); connections = emptyList(); lease.cancel() }
+        reconcile(); changed()
+    }
     // Audio readiness is an event, not something a pending connection must
     // discover on the next one-second heartbeat.
     fun receiverReady() { if (owned()) { handler.removeCallbacks(poll); handler.post(poll) } }
@@ -71,11 +80,18 @@ class DiscoveryController(private val context: Context, private val receiver: Re
         if (owned()) handler.post(poll)
         else {
             if (active) runCatching { backend.stop() }
-            active = false; identity = ""; devices = emptyList(); lease.cancel()
+            active = false; identity = ""; devices = emptyList(); connections = emptyList(); requested.clear(); lease.cancel()
         }
     }
     private fun refresh() {
-        if (lease.expire(SystemClock.elapsedRealtime())) { notice("连接超时，请确认电脑上的发送窗口仍在运行"); changed() }
+        val now = SystemClock.elapsedRealtime()
+        val expired = requested.filterValues { now - it.second >= 12_000 }.keys.toList()
+        expired.forEach { requested.remove(it) }
+        if (expired.isNotEmpty()) {
+            connections = connections.filterNot { it.id in expired }
+            notice("连接未确认，请检查电脑上的 LanMix；旧版发送端会在收到音频后显示"); changed()
+        }
+        if (lease.expire(now)) { notice("连接超时，请确认电脑上的发送窗口仍在运行"); changed() }
         if (!owned()) return
         if (backend.loadError != null) { status = "音频核心不可用"; changed(); return }
         if (Build.VERSION.SDK_INT >= 37 && context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK)
@@ -98,11 +114,32 @@ class DiscoveryController(private val context: Context, private val receiver: Re
                     peer.getString("address"), peer.getInt("audio_port"), peer.getBoolean("ready")))
             }
             devices = found
+            val sessions = snapshot.optJSONArray("sessions")
+            val live = mutableListOf<DeviceConnection>()
+            if (receiver.running && sessions != null) repeat(sessions.length()) { index ->
+                val session = sessions.getJSONObject(index)
+                val state = session.optString("state")
+                if (state == "connected" || state == "connecting") {
+                    val connection = DeviceConnection(session.getString("id"), session.getString("name"),
+                        session.getString("address"), session.optLong("stream_id", 1), state == "connected")
+                    live.add(connection)
+                    requested.remove(connection.id)
+                }
+            }
+            // Old senders have no session notices; received PCM also confirms their request.
+            requested.entries.removeAll { (_, request) -> receiver.sources.any { source ->
+                source.online && source.address.substringBeforeLast(':', source.address) == request.first.address.substringBeforeLast(':')
+            } }
+            connections = live + requested.filterKeys { id -> live.none { it.id == id } }.map { (id, request) ->
+                DeviceConnection(id, request.first.name, request.first.address, 1, false)
+            }
             if (!snapshot.isNull("error")) status = "发现受限：${snapshot.optString("error")}"
             else if (SystemClock.elapsedRealtime() >= noticeUntil) status = "同一局域网 · 自动刷新"
             lease.target?.let { target ->
                 val peer = devices.find { it.id == target }
                 if (peer == null) {
+                    requested.remove(target)
+                    connections = connections.filterNot { it.id == target }
                     lease.cancel(); notice("连接未完成，请确认电脑上的发送窗口仍在运行")
                 } else if (receiver.running) {
                     backend.connect(target)
@@ -113,11 +150,14 @@ class DiscoveryController(private val context: Context, private val receiver: Re
         changed()
     }
     fun connect(device: NearbyDevice) {
+        if (connections.any { it.id == device.id }) return
+        requested[device.id] = device to SystemClock.elapsedRealtime()
+        connections = connections + DeviceConnection(device.id, device.name, device.address, 1, false)
         lease.request(device.id, SystemClock.elapsedRealtime())
         notice("正在连接 ${device.name}…"); changed()
         handler.removeCallbacks(poll); handler.post(poll)
     }
-    fun cancelPending() { lease.cancel(); reconcile() }
+    fun cancelPending() { lease.cancel(); requested.clear(); connections = emptyList(); reconcile(); changed() }
     fun probe(host: String): Boolean = runCatching {
         val parts = host.trim().split(".")
         require(parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.all(Char::isDigit) && (p.toIntOrNull() ?: -1) in 0..255 }) {

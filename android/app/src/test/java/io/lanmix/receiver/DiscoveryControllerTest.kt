@@ -19,10 +19,11 @@ class DiscoveryControllerTest {
         val connections = mutableListOf<String>()
         val identities = mutableListOf<String>()
         var snapshots = 0
+        var sessions = "[]"
         override fun update(identity: String) { identities.add(identity) }
         override fun snapshot(): String {
             snapshots++
-            return """{"peers":[{"id":"desktop","name":"台式机","role":"sender","address":"192.168.1.20:53000","audio_port":46210,"ready":true}],"error":null}"""
+            return """{"peers":[{"id":"desktop","name":"台式机","role":"sender","address":"192.168.1.20:53000","audio_port":46210,"ready":true}],"sessions":$sessions,"error":null}"""
         }
         override fun connect(id: String) { connections.add(id) }
         override fun probe(address: String) {}
@@ -66,6 +67,38 @@ class DiscoveryControllerTest {
         assertEquals("台式机", discovery.nameFor("192.168.1.20"))
         assertEquals("台式机", discovery.nameFor("192.168.1.20:12345"))
         assertNull(discovery.nameFor("192.168.1.99"))
+        discovery.screen(false)
+    }
+
+    @Test fun requestAppearsImmediatelyAndConfirmationDoesNotNeedPcm() {
+        val (state, backend, discovery) = fixture()
+        discovery.screen(true); advance()
+        discovery.connect(discovery.devices.single())
+        assertEquals("台式机", discovery.connections.single().name)
+        assertFalse(discovery.connections.single().connected)
+        state.running = true; discovery.receiverReady(); advance()
+        backend.sessions = """[{"id":"desktop","name":"台式机","address":"192.168.1.20:53000","stream_id":1,"state":"connected"}]"""
+        advance(200)
+        assertTrue(discovery.connections.single().connected)
+        assertTrue(state.sources.isEmpty())
+        discovery.connect(discovery.devices.single()); advance(200)
+        assertEquals(1, backend.connections.size)
+        backend.sessions = "[]"; advance(200)
+        assertTrue(discovery.connections.isEmpty())
+        discovery.screen(false)
+    }
+
+    @Test fun unconfirmedRequestExpiresAndServiceStopClearsSilentConnections() {
+        val (state, _, discovery) = fixture()
+        discovery.screen(true); advance()
+        state.running = true
+        discovery.connect(discovery.devices.single()); advance()
+        assertEquals(1, discovery.connections.size)
+        advance(12_000)
+        assertTrue(discovery.connections.isEmpty())
+        discovery.connect(discovery.devices.single()); advance()
+        discovery.service(false)
+        assertTrue(discovery.connections.isEmpty())
         discovery.screen(false)
     }
 }
