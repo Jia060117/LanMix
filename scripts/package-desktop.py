@@ -1,4 +1,4 @@
-"""Package existing native release binaries; never cross-label a host build."""
+"""Stage two standalone Windows EXEs, or archive other native desktop builds."""
 import argparse
 import hashlib
 import json
@@ -32,11 +32,9 @@ def package(args):
     if args.platform != actual:
         raise SystemExit(f"Host is {actual or platform.platform()}, cannot package {args.platform} binaries")
     bin_dir = args.bin_dir.resolve()
-    out_dir = args.output_dir.resolve()
+    out_dir = (args.output_dir or ROOT / "dist" / ("windows-x64-standalone" if sys.platform == "win32" else "")).resolve()
     suffix = ".exe" if sys.platform == "win32" else ""
     names = ["lanmix-sender", "lanmix-receiver"]
-    if sys.platform == "win32":
-        names.insert(0, "lanmix")
     versions = {
         name: tomllib.loads((ROOT / "crates" / name / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
         for name in ("lanmix-sender", "lanmix-receiver")
@@ -54,6 +52,31 @@ def package(args):
         if reported != version:
             raise SystemExit(f"Stale {binary.name}: expected {version}, got {reported}")
     commit = command("git", "rev-parse", "HEAD")
+    inventory = json.loads((ROOT / "third-party/rust-dependencies.json").read_text(encoding="utf-8"))
+    if inventory["cargo_lock_sha256"] != hashlib.sha256((ROOT / "Cargo.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest():
+        raise SystemExit("Dependency license inventory is stale; run scripts/collect-licenses.py")
+    if sys.platform == "win32":
+        # No duplicate launcher, archive, documentation tree or sidecar DLLs.
+        expected = {name + suffix for name in names}
+        if out_dir.exists() and any(path.name not in expected or not path.is_file() for path in out_dir.iterdir()):
+            raise SystemExit(f"Choose a directory containing only the two desktop EXEs: {out_dir}")
+        with tempfile.TemporaryDirectory(prefix="lanmix-notices-") as temporary:
+            notice = Path(temporary) / "notices.txt"
+            reference = ""
+            for name in ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md",
+                         "vendor/cpal/LICENSE", "vendor/cpal/LANMIX_PATCH.md", "THIRD_PARTY_LICENSES.txt"):
+                reference += f"\n================ {name} ================\n\n" + (ROOT / name).read_text(encoding="utf-8") + "\n"
+            for name in names:
+                subprocess.run([str(bin_dir / (name + suffix)), "--licenses", str(notice)], check=True)
+                if notice.read_text(encoding="utf-8") != reference:
+                    raise SystemExit(f"Stale embedded redistribution notices in {name}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            artifact = out_dir / (name + suffix)
+            shutil.copy2(bin_dir / artifact.name, artifact)
+            print(f"Executable: {artifact}\nSHA256: {hashlib.sha256(artifact.read_bytes()).hexdigest()}")
+        print(f"Version: {version}\nCommit: {commit}")
+        return
     stem = f"LanMix-{version}-{args.platform}-{commit[:8]}"
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lanmix-package-") as temporary:
@@ -67,9 +90,6 @@ def package(args):
         shutil.copy2(ROOT / "vendor" / "cpal" / "LICENSE", folder / "CPAL-LICENSE")
         for name in ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt"):
             shutil.copy2(ROOT / name, folder / name)
-        inventory = json.loads((ROOT / "third-party/rust-dependencies.json").read_text(encoding="utf-8"))
-        if inventory["cargo_lock_sha256"] != hashlib.sha256((ROOT / "Cargo.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest():
-            raise SystemExit("Dependency license inventory is stale; run scripts/collect-licenses.py")
         shutil.copytree(ROOT / "third-party", folder / "third-party")
         (folder / "BUILD-INFO.json").write_text(json.dumps({
             "version": version, "commit": commit, "platform": args.platform,
@@ -115,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=sorted(HOSTS.values()), required=True)
     parser.add_argument("--bin-dir", type=Path, default=ROOT / "target" / "release")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
+    parser.add_argument("--output-dir", type=Path)
     package(parser.parse_args())
 
 

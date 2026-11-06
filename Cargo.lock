@@ -1380,6 +1380,7 @@ dependencies = [
  "lanmix-core",
  "lanmix-discovery",
  "lanmix-network",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
 ]
@@ -1395,6 +1396,7 @@ dependencies = [
  "lanmix-audio",
  "lanmix-discovery",
  "lanmix-proto",
+ "miniz_oxide 0.8.9",
  "rtrb",
  "serde",
  "serde_json",

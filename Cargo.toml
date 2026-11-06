@@ -29,6 +29,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 socket2 = "0.6"
 ctrlc = "3"
+miniz_oxide = "=0.8.9"
 lanmix-proto = { path = "crates/lanmix-proto" }
 lanmix-core = { path = "crates/lanmix-core" }
 lanmix-network = { path = "crates/lanmix-network" }

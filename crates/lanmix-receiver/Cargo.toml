@@ -14,4 +14,8 @@ lanmix-network.workspace = true
 lanmix-audio.workspace = true
 lanmix-core.workspace = true
 lanmix-discovery.workspace = true
+miniz_oxide.workspace = true
+
+[build-dependencies]
+miniz_oxide.workspace = true
 

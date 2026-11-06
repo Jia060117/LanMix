@@ -46,5 +46,6 @@ Android 界面参考了 [KernelSU Manager](https://github.com/tiann/KernelSU) �
 图标或资源，也未引入 Miuix 或 Compose。这里的致谢不代表两项目存在官方关联。
 初期方案提及的 Oboe、rubato、bytemuck 与 Opus 没有作为当前实现的直接依赖使用。
 
-Windows ZIP 包和 Android APK 均附带项目与第三方许可文本。重新分发时请继续保留
-相关版权、许可证和必要声明。
+Windows 两个独立 EXE 均内置压缩的项目与第三方许可全文，可用 `--licenses 文件路径`
+导出；Android APK 在 assets 中保留许可文本。重新分发时请继续保留相关版权、
+许可证和必要声明。

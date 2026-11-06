@@ -1,3 +1,4 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 use cpal::{
@@ -16,6 +17,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[path = "../../desktop_notices.rs"]
+mod desktop_notices;
 #[cfg(windows)]
 mod gui;
 mod redundancy;
@@ -32,6 +35,9 @@ struct CapturedFrame {
     about = "LanMix: stream system audio as float PCM over your LAN"
 )]
 struct Args {
+    /// Export embedded project and third-party license notices to a UTF-8 file.
+    #[arg(long, value_name = "FILE")]
+    licenses: Option<std::path::PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -89,7 +95,21 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    if std::env::args_os().len() > 1 {
+        use windows_sys::Win32::{Foundation::INVALID_HANDLE_VALUE, System::Console::*};
+        // Preserve redirected output used by CLI callers and build checks.
+        unsafe {
+            let output = GetStdHandle(STD_OUTPUT_HANDLE);
+            if output.is_null() || output == INVALID_HANDLE_VALUE {
+                AttachConsole(ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
     let args = Args::parse();
+    if let Some(path) = &args.licenses {
+        return desktop_notices::export(path);
+    }
     match args.command {
         None | Some(Command::Gui) => {
             #[cfg(windows)]

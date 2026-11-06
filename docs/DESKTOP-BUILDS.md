@@ -11,16 +11,20 @@ GitHub 仓库的 **Actions → Rust desktop checks → 成功的运行 → Artif
 
 | 构建 | 包格式 | 内容与边界 |
 |---|---|---|
-| Windows x64 | ZIP | `lanmix.exe` 原生发送窗口、`lanmix-sender.exe` 命令行、`lanmix-receiver.exe` 混音接收端 |
+| Windows x64 | 两个 EXE，分别提供 | `LanMix-sender-windows-x64` 为发送端；`LanMix-receiver-windows-x64` 为混音接收端 |
 | Linux x64 | tar.gz | 命令行发送端、图形混音接收端；在 Ubuntu 22.04 构建 |
 | macOS Apple Silicon | ZIP | ARM64 的 `LanMix.app` 混音接收端、命令行程序 |
 | macOS Intel | ZIP | x64 的 `LanMix.app` 混音接收端、命令行程序 |
 
 Artifacts 保留 30 天，通常需登录 GitHub 下载；这不是 GitHub Release，也不会创建
-发布说明。每个下载包含归档和 `SHA256SUMS.txt`，包内 `BUILD-INFO.json` 记录版本、
-提交和平台。推送与手动运行都会在检查成功后上传，PR 只检查和打包，不上传。
+发布说明。Windows 每个 Artifact 仅上传对应 EXE；GitHub 的 Artifact 下载可能自动套一层 ZIP，
+正式 Release 则直接上传两个 EXE 供分别下载。版本、提交和摘要见构建日志。
+Linux / macOS 开发包保留归档、`SHA256SUMS.txt` 和包内 `BUILD-INFO.json`。
+推送与手动运行都会在检查成功后上传，PR 只检查和准备文件，不上传。
 
-Windows 解压后双击 `lanmix.exe`；桌面混音接收端是 `lanmix-receiver.exe`。
+Windows 直接双击 `lanmix-sender.exe` 发送声音；`lanmix-receiver.exe` 用于电脑接收、混音。
+发送端同时保留 CLI，不另附重复的 `lanmix.exe`。两个 EXE 都内置压缩的项目与第三方许可，
+可通过 `--licenses 文件路径` 导出，无需额外携带许可目录。
 Linux 解压后在图形会话中运行 `./lanmix-receiver`；命令行程序用 `./lanmix-sender`。
 macOS 按芯片下载，解压后打开 `LanMix.app`；包内同名命令行接收端可用于无声诊断。
 Mac App 使用本地 ad-hoc 签名，没有冒用任何发布者，也未做 Developer ID 公证；
@@ -59,7 +63,8 @@ python scripts/smoke_test.py --bin-dir target/release
 python scripts/package-desktop.py --platform linux-x64
 ```
 
-将平台改为 `windows-x64`、`macos-arm64` 或 `macos-x64`。脚本校验宿主平台与
+将平台改为 `windows-x64`、`macos-arm64` 或 `macos-x64`。Windows 默认输出目录为
+`dist/windows-x64-standalone/`，其中只有两个 EXE；其他平台沿用归档格式。脚本校验宿主平台与
 二进制版本，不接受在 Windows 上给 Windows 程序贴上 Mac 标签。Mac 构建另外
 需要 Xcode Command Line Tools，工作流将部署目标设为 macOS 11.0；这个声明不
 代替在旧版系统上的实机运行测试。生成物位于被 Git 忽略的 `dist/`。

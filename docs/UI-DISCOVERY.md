@@ -46,7 +46,7 @@ Windows / Android 当前源码为 1.0.3。本轮未替换正式下载；PCM 协�
 
 ## Windows
 
-双击 **`lanmix.exe`** 打开发送窗口，无控制台窗口。选择接收设备后点击连接，
+双击 **`lanmix-sender.exe`** 打开发送窗口，无控制台窗口。选择接收设备后点击连接，
 或输入 `IP:端口`。默认采集 Windows 系统输出，保留 20 ms 备份。
 窗口支持选取其他输出端点；发送时锁定此选项，停止后可切换。
 
@@ -63,12 +63,13 @@ Tab / 空格操作原生控件，设备列表支持双击和 Enter，地址输�
 窗口按系统 DPI 缩放，并限制高度使其适配工作区。上次成功的接收地址和允许接收端发起连接
 设置保存在 `%LOCALAPPDATA%/LanMix/sender.json`，不包含自动开始发送的行为。
 这是纯 Rust 调用 Win32 的界面，没有浏览器、WebView 或另起一个发送子进程。
-`lanmix-sender.exe` 保留原有命令行功能；不带参数时也可以打开窗口。
+Windows 只提供 `lanmix-sender.exe` 与 `lanmix-receiver.exe` 两个独立下载，移除重复的
+`lanmix.exe` 启动器。`lanmix-sender.exe` 保留原有命令行功能；不带参数时打开窗口。
 `lanmix-receiver.exe` 是 Rust/egui 桌面混音接收端，也支持设备发现与请求连接。
 
 ## 连接方法
 
-1. 电脑打开新版 `lanmix.exe`，手机打开 LanMix。Android 17+ 需允许本地网络访问。
+1. 电脑打开新版 `lanmix-sender.exe`，手机打开 LanMix。Android 17+ 需允许本地网络访问。
 2. 手机在“设备”页面选择电脑并点“连接并接收”。应用先打开接收输出，
    确认就绪后再请求电脑开始发送。
 3. 也可先在手机开始接收，再从电脑列表选择手机并连接。

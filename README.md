@@ -48,7 +48,7 @@ Windows 发送窗口使用 Rust / Win32，无 WebView。Android 使用原生 Kot
 
 | 平台 | 正式下载 | 说明 |
 |---|---|---|
-| Windows 10 / 11 x64 | `LanMix-1.0.0-windows-x64.zip` | 原生发送窗口、命令行发送端、桌面混音接收端 |
+| Windows 10 / 11 x64 | `lanmix-sender.exe` / `lanmix-receiver.exe` | 两个独立程序，按需下载；发送端兼具窗口与命令行 |
 | Android 8.0+ / API 26+ | `LanMix-1.0.0-android.apk` | ARM64 / ARMv7 双架构，无需 Root；Android 17+ 需允许本地网络访问 |
 | Linux / macOS | 暂不提供正式版 | 有 CI 开发构建，尚未完成实体音频设备验收；macOS 系统声音采集未实现 |
 | iOS / iPadOS | 暂不支持 | 尚无可安装 App 工程 |
@@ -66,8 +66,9 @@ Windows 发送窗口使用 Rust / Win32，无 WebView。Android 使用原生 Kot
 ### 1. 下载并打开
 
 从 [Releases](https://github.com/Jia060117/LanMix/releases/latest) 下载正式包。
-Windows 解压后双击 **`lanmix.exe`**；手机安装 APK 后打开 LanMix。
-可用同页 `SHA256SUMS.txt` 核对下载文件。
+Windows 下载发送端 **`lanmix-sender.exe`** 后直接双击；想用电脑接收、混音时下载
+**`lanmix-receiver.exe`**。两个程序分别提供，不需要 ZIP、安装器或附带文件夹。
+手机安装 APK 后打开 LanMix。历史 v1.0.0 的 ZIP 不再作为后续 Windows 发布格式。
 
 **从旧测试版升级：** v1.0.0 改用 Jia060117 专用发布签名。此前调试签名 APK
 需先卸载再安装，旧版应用设置会清除。后续正式版沿用该发布密钥。

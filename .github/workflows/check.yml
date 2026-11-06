@@ -44,7 +44,7 @@ jobs:
       - name: Package desktop binaries
         run: python scripts/package-desktop.py --platform ${{ matrix.package }}
       - name: Upload desktop download
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: LanMix-${{ matrix.package }}
@@ -52,5 +52,21 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows sender
+        if: github.event_name != 'pull_request' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanMix-sender-windows-x64
+          path: dist/windows-x64-standalone/lanmix-sender.exe
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows receiver
+        if: github.event_name != 'pull_request' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanMix-receiver-windows-x64
+          path: dist/windows-x64-standalone/lanmix-receiver.exe
           if-no-files-found: error
           retention-days: 30

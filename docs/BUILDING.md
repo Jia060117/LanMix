@@ -20,8 +20,11 @@ python scripts/test_discovery.py --bin-dir target/release
 python scripts/package-desktop.py --platform windows-x64
 ```
 
-打包脚本检查本机架构、程序版本和许可清单对应的 Cargo.lock 摘要，并写入提交号。
-生成物在被 Git 忽略的 `dist/`。重新发布前应对解压后的实际二进制重做进程测试。
+分发脚本检查本机架构、程序版本、内置许可和许可清单对应的 Cargo.lock 摘要。
+Windows 仅输出 `dist/windows-x64-standalone/lanmix-sender.exe` 与 `lanmix-receiver.exe`，
+不生成压缩包、重复入口、说明目录或校验附件；版本、提交号和 SHA-256 输出到构建日志。
+项目及第三方许可经压缩内置，各程序可用 `--licenses 文件路径` 导出全文。
+重新发布前应对待上传的实际二进制做进程检查。
 Windows 程序当前没有商业代码签名。
 
 ## 许可清单
@@ -83,6 +86,7 @@ aapt2 dump badging app-release.apk
 
 ## 发布
 
-相关检查通过后提交源码，再基于该提交打包、标记版本，上传 Windows ZIP、
-Android 正式签名 APK 和 SHA256SUMS.txt。正式 Release 不上传其他平台开发产物。
+相关检查通过后提交源码，再基于该提交构建、标记版本，分别上传 Windows 发送端
+`lanmix-sender.exe`、接收端 `lanmix-receiver.exe` 和 Android 正式签名 APK。
+Windows 不上传 ZIP、重复入口或附带目录。正式 Release 不上传其他平台开发产物。
 测试边界和未完成的实体设备验收必须如实保留在验证记录中。

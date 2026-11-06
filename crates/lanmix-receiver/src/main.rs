@@ -17,9 +17,15 @@ use std::{
 
 const ACCENT: Color32 = Color32::from_rgb(91, 224, 182);
 
+#[path = "../../desktop_notices.rs"]
+mod desktop_notices;
+
 #[derive(Parser)]
 #[command(version, about = "LanMix multi-device audio mixer")]
 struct Args {
+    /// Export embedded project and third-party license notices to a UTF-8 file.
+    #[arg(long, value_name = "FILE")]
+    licenses: Option<PathBuf>,
     #[arg(long, default_value = "0.0.0.0:46210")]
     bind: SocketAddr,
     /// Run the real receiver and mixer without opening an audio device or window.
@@ -679,6 +685,9 @@ fn equalizer(ui: &mut egui::Ui, id: &str, mix: &mut MixSettings, sample_rate: u3
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(path) = &args.licenses {
+        return desktop_notices::export(path);
+    }
     if args.headless {
         return headless(args);
     }
