@@ -22,6 +22,7 @@ object NativeBridge {
     external fun nativeDiscoveryUpdate(identity: String)
     external fun nativeDiscoverySnapshot(): String
     external fun nativeDiscoveryConnect(id: String)
+    external fun nativeDiscoveryMedia(id: String, revision: Long, action: String)
     external fun nativeDiscoveryProbe(address: String)
     external fun nativeDiscoveryStop()
 }

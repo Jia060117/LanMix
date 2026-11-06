@@ -4,6 +4,7 @@
     <string name="receiver_notification_title">LanMix 后台接收中</string>
     <string name="receiver_notification_starting">正在启动局域网音频</string>
     <string name="receiver_notification_active">UDP %1$d · 与其他应用同时播放</string>
+    <string name="receiver_notification_remote">远程控制电脑播放器 · 展开可停止接收</string>
     <string name="receiver_notification_stopping">正在停止接收</string>
     <string name="receiver_stop">停止接收</string>
     <string name="receiver_background_hint">切换应用或锁屏后继续接收。通知栏可停止；与其他音乐、视频应用同时播放。</string>

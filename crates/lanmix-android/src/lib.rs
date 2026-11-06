@@ -405,6 +405,29 @@ pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryConne
 }
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryMedia(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    id: JString<'_>,
+    revision: jni::sys::jlong,
+    action: JString<'_>,
+) {
+    boundary(&mut env, |env| {
+        ensure!(revision > 0, "invalid media session revision");
+        let id: String = env.get_string(&id)?.into();
+        let action: String = env.get_string(&action)?.into();
+        let action: lanmix_discovery::MediaAction =
+            serde_json::from_value(serde_json::Value::String(action))?;
+        DISCOVERY
+            .lock()
+            .map_err(|_| anyhow!("discovery lock poisoned"))?
+            .as_ref()
+            .context("discovery is stopped")?
+            .media(&id, revision as u64, action)
+    });
+}
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_lanmix_receiver_NativeBridge_nativeDiscoveryProbe(
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,

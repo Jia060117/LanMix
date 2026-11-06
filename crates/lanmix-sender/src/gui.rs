@@ -183,7 +183,7 @@ unsafe extern "system" fn button_proc(
 struct Window {
     hwnd: HWND,
     identity: Identity,
-    discovery: Option<Discovery>,
+    discovery: Option<Arc<Discovery>>,
     peers: Vec<Peer>,
     signature: String,
     session: Option<Session>,
@@ -613,6 +613,13 @@ impl Window {
             return;
         };
         let snapshot = discovery.snapshot();
+        media::dispatch_pending(
+            discovery,
+            self.session
+                .as_ref()
+                .filter(|session| session.ready && !session.stopping)
+                .map(|session| (session.target.address, 1)),
+        );
         let requests = discovery.take_requests();
         let peers: Vec<_> = snapshot
             .peers
@@ -684,7 +691,7 @@ impl Window {
                 Err(e) => self.status(&format!("刷新失败：{e:#}"), RED),
             }
         } else {
-            match Discovery::start(self.identity.clone()) {
+            match Discovery::start(self.identity.clone()).map(Arc::new) {
                 Ok(d) => {
                     self.discovery = Some(d);
                     self.refresh();
@@ -1306,7 +1313,7 @@ pub fn run() -> Result<()> {
         let icon = brand_icon();
         ensure!(!icon.is_null(), "load LanMix window icon");
         let identity = sender_identity(true)?;
-        let discovery = Discovery::start(identity.clone());
+        let discovery = Discovery::start(identity.clone()).map(Arc::new);
         let error = discovery
             .as_ref()
             .err()

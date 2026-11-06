@@ -9,8 +9,8 @@ android {
         applicationId = "io.lanmix.receiver"
         minSdk = 26
         targetSdk = 37
-        versionCode = 13
-        versionName = "1.0.3"
+        versionCode = 14
+        versionName = "1.0.4"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {

@@ -35,6 +35,8 @@ pub struct Identity {
     pub audio_port: u16,
     pub ready: bool,
     pub version: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub media_controls: bool,
 }
 impl Identity {
     pub fn new(name: String, role: Role, version: &str) -> Result<Self> {
@@ -45,6 +47,7 @@ impl Identity {
             audio_port: 0,
             ready: false,
             version: version.into(),
+            media_controls: false,
         })
     }
     fn valid(&self) -> bool {
@@ -110,6 +113,29 @@ pub struct SessionPeer {
     pub peer: Peer,
     pub state: SessionState,
     pub stream_id: u32,
+    pub revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaAction {
+    Previous,
+    PlayPause,
+    Next,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MediaNotice {
+    action: MediaAction,
+    revision: u64,
+}
+#[derive(Clone, Debug)]
+pub struct MediaRequest {
+    pub peer: Peer,
+    pub action: MediaAction,
+    pub stream_id: u32,
+    revision: u64,
+    at: Instant,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -132,6 +158,8 @@ struct Message {
     request: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<SessionNotice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    media: Option<MediaNotice>,
 }
 impl Message {
     fn new(kind: &str, peer: Identity) -> Self {
@@ -143,6 +171,7 @@ impl Message {
             target: None,
             request: None,
             session: None,
+            media: None,
         }
     }
     fn decode(bytes: &[u8]) -> Option<Self> {
@@ -155,10 +184,16 @@ impl Message {
             && m.peer.valid()
             && matches!(
                 m.kind.as_str(),
-                "probe" | "hello" | "connect" | "bye" | "session"
+                "probe" | "hello" | "connect" | "bye" | "session" | "media"
             )
             && ((m.kind == "session") == m.session.is_some())
             && (m.kind != "session" || (m.target.is_some() && m.peer.role == Role::Sender))
+            && ((m.kind == "media") == m.media.is_some())
+            && (m.kind != "media"
+                || (m.target.is_some()
+                    && m.request.is_some()
+                    && m.peer.role == Role::Receiver
+                    && m.media.as_ref().is_some_and(|n| n.revision > 0)))
             && m.target.as_ref().is_none_or(|s| valid_id(s))
             && m.request.as_ref().is_none_or(|s| valid_id(s)))
         .then_some(m)
@@ -168,7 +203,8 @@ enum Command {
     Identity(Identity),
     Probe(SocketAddr),
     Connect(String, String),
-    Session(SocketAddr, u32, SessionState),
+    Session(SocketAddr, SessionNotice),
+    Media(String, String, MediaNotice),
 }
 struct Seen {
     peer: Peer,
@@ -178,6 +214,9 @@ struct Seen {
 struct Shared {
     snapshot: Snapshot,
     requests: VecDeque<ConnectRequest>,
+    media: VecDeque<MediaRequest>,
+    sender_session: Option<(SocketAddr, SessionNotice)>,
+    session_revision: u64,
 }
 
 pub struct Discovery {
@@ -233,6 +272,50 @@ impl Discovery {
     pub fn take_requests(&self) -> Vec<ConnectRequest> {
         self.shared.lock().unwrap().requests.drain(..).collect()
     }
+    /// Only fresh commands for the still-current connected session can leave the queue.
+    pub fn take_media_requests(&self) -> Vec<MediaRequest> {
+        let mut shared = self.shared.lock().unwrap();
+        let current = shared.sender_session.clone();
+        let queued: Vec<_> = shared.media.drain(..).collect();
+        queued
+            .into_iter()
+            .filter(|request| {
+                current.as_ref().is_some_and(|(address, session)| {
+                    session.state == SessionState::Connected
+                        && session.revision == request.revision
+                        && *address == request.peer.audio_address()
+                }) && request.at.elapsed() < Duration::from_secs(1)
+                    && shared.snapshot.peers.iter().any(|peer| {
+                        peer.identity.id == request.peer.identity.id
+                            && peer.address == request.peer.address
+                            && peer.identity.ready
+                    })
+            })
+            .collect()
+    }
+    pub fn media(&self, id: &str, revision: u64, action: MediaAction) -> Result<()> {
+        ensure!(valid_id(id), "invalid device identity");
+        let state = self.shared.lock().unwrap();
+        ensure!(
+            state.snapshot.sessions.len() == 1
+                && state
+                    .snapshot
+                    .sessions
+                    .iter()
+                    .any(|s| s.peer.identity.id == id
+                        && s.state == SessionState::Connected
+                        && s.peer.identity.media_controls
+                        && s.revision == revision),
+            "media session is no longer connected"
+        );
+        self.tx
+            .try_send(Command::Media(
+                id.into(),
+                random_id()?,
+                MediaNotice { action, revision },
+            ))
+            .context("discovery busy")
+    }
     pub fn update(&self, identity: Identity) -> Result<()> {
         ensure!(identity.valid(), "invalid discovery identity");
         self.tx
@@ -264,9 +347,19 @@ impl Discovery {
             receiver.is_ipv4() && receiver.port() != 0,
             "session requires an IPv4 audio endpoint"
         );
+        let mut shared = self.shared.lock().unwrap();
+        let notice = SessionNotice {
+            state,
+            stream_id,
+            revision: shared.session_revision.saturating_add(1),
+        };
         self.tx
-            .try_send(Command::Session(receiver, stream_id, state))
-            .context("discovery busy")
+            .try_send(Command::Session(receiver, notice.clone()))
+            .context("discovery busy")?;
+        shared.session_revision = notice.revision;
+        shared.sender_session = Some((receiver, notice));
+        shared.media.clear();
+        Ok(())
     }
 }
 impl Drop for Discovery {
@@ -313,7 +406,7 @@ fn run(
     let mut buffer = [0; LIMIT + 1];
     let mut outgoing: Option<(SocketAddr, SessionNotice)> = None;
     let mut incoming: HashMap<String, (SessionPeer, u64, Instant)> = HashMap::new();
-    let mut revision = 0u64;
+    let mut media_seen: VecDeque<(String, String, Instant)> = VecDeque::new();
     while !stop.load(Ordering::Acquire) {
         for command in rx.try_iter().take(32) {
             match command {
@@ -324,17 +417,9 @@ fn run(
                     }
                     last = Instant::now() - HEARTBEAT;
                 }
-                Command::Session(address, stream_id, state) => {
+                Command::Session(address, notice) => {
                     if identity.role == Role::Sender {
-                        revision = revision.saturating_add(1);
-                        outgoing = Some((
-                            address,
-                            SessionNotice {
-                                state,
-                                stream_id,
-                                revision,
-                            },
-                        ));
+                        outgoing = Some((address, notice));
                         // Retry transitions independently of the next session. A quick
                         // disconnect/reconnect must not leave the old receiver connected.
                         for peer in seen.values() {
@@ -354,6 +439,28 @@ fn run(
                 }
                 Command::Probe(address) => {
                     let _ = send(&direct, &Message::new("probe", identity.clone()), address);
+                }
+                Command::Media(id, request, notice) => {
+                    if identity.role == Role::Receiver
+                        && identity.ready
+                        && incoming
+                            .values()
+                            .filter(|(session, _, _)| session.state != SessionState::Disconnected)
+                            .count()
+                            == 1
+                        && let Some((session, _, at)) = incoming.get(&id)
+                        && at.elapsed() < PEER_TTL
+                        && session.state == SessionState::Connected
+                        && session.peer.identity.media_controls
+                        && session.revision == notice.revision
+                        && pending.len() < 16
+                    {
+                        let mut message = Message::new("media", identity.clone());
+                        message.target = Some(id);
+                        message.request = Some(request);
+                        message.media = Some(notice);
+                        pending.push((message, session.peer.address, Instant::now(), 0));
+                    }
                 }
                 Command::Connect(id, request) => {
                     if let Some(peer) = seen.get(&id).filter(|p| p.at.elapsed() < PEER_TTL)
@@ -421,6 +528,19 @@ fn run(
                 {
                     continue;
                 }
+                // Media controls must arrive on the already discovered receiver's
+                // direct endpoint; a media packet cannot introduce or move a peer.
+                if message.kind == "media"
+                    && seen.get(&message.peer.id).is_none_or(|p| {
+                        p.peer.address != address
+                            || p.at.elapsed() >= PEER_TTL
+                            || p.peer.identity.role != message.peer.role
+                            || p.peer.identity.audio_port != message.peer.audio_port
+                            || !p.peer.identity.ready
+                    })
+                {
+                    continue;
+                }
                 if message.kind == "bye" {
                     seen.remove(&message.peer.id);
                     incoming.remove(&message.peer.id);
@@ -462,11 +582,58 @@ fn run(
                                 peer: peer.clone(),
                                 state: notice.state,
                                 stream_id: notice.stream_id,
+                                revision: notice.revision,
                             },
                             notice.revision,
                             Instant::now(),
                         ),
                     );
+                }
+                if message.kind == "media"
+                    && identity.role == Role::Sender
+                    && identity.media_controls
+                    && peer.identity.role == Role::Receiver
+                    && peer.identity.ready
+                    && message.target.as_deref() == Some(&identity.id)
+                    && let (Some(notice), Some(request)) = (message.media, message.request.as_ref())
+                    && !media_seen
+                        .iter()
+                        .any(|(id, key, _)| id == &peer.identity.id && key == request)
+                    && let Some((destination, session)) = &outgoing
+                    && session.state == SessionState::Connected
+                    && session.revision == notice.revision
+                    && *destination == peer.audio_address()
+                    && session_message(&identity, &outgoing, &peer).is_some()
+                {
+                    let mut state = shared.lock().unwrap();
+                    // announce_session invalidates old commands synchronously, including
+                    // the interval before this worker processes its next command batch.
+                    if state
+                        .sender_session
+                        .as_ref()
+                        .is_some_and(|(address, current)| {
+                            address == destination
+                                && current.revision == notice.revision
+                                && current.state == SessionState::Connected
+                        })
+                        && state.media.len() < 16
+                    {
+                        if media_seen.len() == 128 {
+                            media_seen.pop_front();
+                        }
+                        media_seen.push_back((
+                            peer.identity.id.clone(),
+                            request.clone(),
+                            Instant::now(),
+                        ));
+                        state.media.push_back(MediaRequest {
+                            peer: peer.clone(),
+                            action: notice.action,
+                            stream_id: session.stream_id,
+                            revision: notice.revision,
+                            at: Instant::now(),
+                        });
+                    }
                 }
                 if message.kind == "connect"
                     && identity.role == Role::Sender
@@ -491,6 +658,7 @@ fn run(
         seen.retain(|_, peer| peer.at.elapsed() < PEER_TTL);
         incoming.retain(|id, (_, _, at)| seen.contains_key(id) && at.elapsed() < PEER_TTL);
         requests.retain(|(_, at)| at.elapsed() < Duration::from_secs(10));
+        media_seen.retain(|(_, _, at)| at.elapsed() < Duration::from_secs(10));
         let mut peers: Vec<_> = seen.values().map(|p| p.peer.clone()).collect();
         peers.sort_by(|a, b| {
             a.identity
@@ -547,6 +715,149 @@ fn session_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_is_session_scoped_and_retries_execute_only_once() {
+        let mut source = identity(Role::Sender);
+        source.media_controls = true;
+        let source_id = source.id.clone();
+        let sender = Discovery::start_on(source, 0).unwrap();
+        let receiver = Discovery::start_on(identity(Role::Receiver), 0).unwrap();
+        receiver
+            .probe((Ipv4Addr::LOCALHOST, sender.local_addr().port()).into())
+            .unwrap();
+        wait(|| sender.snapshot().peers.len() == 1 && receiver.snapshot().peers.len() == 1);
+        assert!(
+            receiver
+                .media(&source_id, 1, MediaAction::PlayPause)
+                .is_err()
+        );
+        let destination = (Ipv4Addr::LOCALHOST, 46210).into();
+        sender
+            .announce_session(destination, 7, SessionState::Connected)
+            .unwrap();
+        wait(|| receiver.snapshot().sessions.len() == 1);
+        let revision = receiver.snapshot().sessions[0].revision;
+        receiver
+            .media(&source_id, revision, MediaAction::PlayPause)
+            .unwrap();
+        let mut received = Vec::new();
+        wait(|| {
+            received.extend(sender.take_media_requests());
+            received.len() == 1
+        });
+        assert_eq!(received[0].action, MediaAction::PlayPause);
+        assert_eq!(received[0].stream_id, 7);
+        thread::sleep(Duration::from_millis(750));
+        assert!(
+            sender.take_media_requests().is_empty(),
+            "UDP retry must not toggle playback again"
+        );
+        for action in [MediaAction::Previous, MediaAction::Next] {
+            receiver.media(&source_id, revision, action).unwrap();
+        }
+        received.clear();
+        wait(|| {
+            received.extend(sender.take_media_requests());
+            received.len() == 2
+        });
+        assert!(received.iter().any(|r| r.action == MediaAction::Previous));
+        assert!(received.iter().any(|r| r.action == MediaAction::Next));
+        receiver
+            .media(&source_id, revision, MediaAction::Next)
+            .unwrap();
+        wait(|| !sender.shared.lock().unwrap().media.is_empty());
+        sender
+            .announce_session(destination, 7, SessionState::Disconnected)
+            .unwrap();
+        assert!(
+            sender.take_media_requests().is_empty(),
+            "disconnect invalidates queued commands synchronously"
+        );
+        wait(|| receiver.snapshot().sessions.is_empty());
+        assert!(
+            receiver
+                .media(&source_id, revision, MediaAction::Next)
+                .is_err()
+        );
+        sender
+            .announce_session(destination, 7, SessionState::Connected)
+            .unwrap();
+        wait(|| !receiver.snapshot().sessions.is_empty());
+        assert!(
+            receiver
+                .media(&source_id, revision, MediaAction::Next)
+                .is_err(),
+            "old notification cannot control a new session"
+        );
+        let revision = receiver.snapshot().sessions[0].revision;
+        receiver
+            .media(&source_id, revision, MediaAction::Previous)
+            .unwrap();
+        wait(|| !sender.take_media_requests().is_empty());
+    }
+
+    #[test]
+    fn media_rejects_unknown_commands_missing_scope_and_foreign_receiver() {
+        let mut source = identity(Role::Sender);
+        source.media_controls = true;
+        let source_id = source.id.clone();
+        let sender = Discovery::start_on(source, 0).unwrap();
+        let receiver = identity(Role::Receiver);
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = (Ipv4Addr::LOCALHOST, sender.local_addr().port()).into();
+        send(&socket, &Message::new("probe", receiver.clone()), endpoint).unwrap();
+        wait(|| sender.snapshot().peers.len() == 1);
+        sender
+            .announce_session(
+                (Ipv4Addr::LOCALHOST, 46210).into(),
+                1,
+                SessionState::Connected,
+            )
+            .unwrap();
+        let mut message = Message::new("media", receiver);
+        message.target = Some(source_id);
+        message.request = Some(random_id().unwrap());
+        message.media = Some(MediaNotice {
+            action: MediaAction::Next,
+            revision: 1,
+        });
+        let good = serde_json::to_value(&message).unwrap();
+        assert!(Message::decode(&serde_json::to_vec(&good).unwrap()).is_some());
+        for (field, value) in [
+            ("target", serde_json::Value::Null),
+            ("request", serde_json::Value::Null),
+            (
+                "media",
+                serde_json::json!({"action":"volume_up","revision":1}),
+            ),
+            ("media", serde_json::json!({"action":"next","revision":0})),
+        ] {
+            let mut invalid = good.clone();
+            invalid[field] = value;
+            assert!(Message::decode(&serde_json::to_vec(&invalid).unwrap()).is_none());
+        }
+        // A new socket cannot impersonate the known receiver by sending a media packet.
+        let stranger = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        send(&stranger, &message, endpoint).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        assert!(sender.take_media_requests().is_empty());
+        assert_eq!(
+            sender.snapshot().peers[0].address.port(),
+            socket.local_addr().unwrap().port()
+        );
+        message.peer.audio_port = 46212;
+        send(&socket, &message, endpoint).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            sender.take_media_requests().is_empty(),
+            "another audio destination cannot control this sender"
+        );
+        message.peer.audio_port = 46210;
+        message.target = Some(random_id().unwrap());
+        send(&socket, &message, endpoint).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        assert!(sender.take_media_requests().is_empty());
+    }
     fn identity(role: Role) -> Identity {
         let mut id = Identity::new("test 电脑".into(), role, "test").unwrap();
         id.audio_port = 46210;

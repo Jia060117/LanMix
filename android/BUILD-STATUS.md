@@ -1,5 +1,28 @@
 # Verified Android build
 
+## 1.0.4 notification media controls · 2026-11-07
+
+- Local development package `io.lanmix.receiver`, **1.0.4 / version code 14**,
+  minimum API 26 / target 37, non-debuggable. No new GitHub Release this iteration.
+- Local artifact: `dist/android/LanMix-1.0.4.apk`, **2,267,077 bytes**.
+  SHA-256: `7be282f2e134fdf65294d71f735889d9596b7d09405806a6bace68d876750c06`.
+- ARM64 / ARMv7 JNI rebuilt, including the thirteenth export for session-scoped media
+  commands. Debug / Release each passed **92 Kotlin tests**, assembly and lint
+  (**38 / 37 warnings, 0 errors**). No added dependency or PCM/DSP/playback policy change.
+- Notification tests cover three compact actions plus expanded stop, silent sessions,
+  legacy/multiple/pending/unmatched sources, background routing and stale PendingIntents.
+  Real UDP Rust tests cover command deduplication, target/session/endpoint validation and
+  disconnect/reconnect. Host JVM `-Xcheck:jni` passed all thirteen exports and existing
+  lifecycle, mixed-rate PCM and loss/repair checks. An initial concurrent host run failed
+  the existing timing-sensitive loss diagnostic assertion; the isolated rerun passed.
+- APK v2 signature, dual-ABI ELF / ZIP 16 KiB alignment and all seven notice/dependency
+  assets verified. Publisher remains `CN=Jia060117, OU=LanMix, O=Jia060117`, certificate
+  SHA-256 `d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`.
+- Windows sender rebuilt separately; both sender and Android need updating for controls.
+  Windows receiver UI is untouched. No actual system media-key injection, computer-use,
+  phone installation or listening test was performed; player response and notification
+  presentation on the user's phone remain for manual acceptance.
+
 ## Official 1.0.3 visual identity · 2026-11-06
 
 - Package `io.lanmix.receiver`, **1.0.3 / version code 13**, minimum API 26 / target 37, non-debuggable release.

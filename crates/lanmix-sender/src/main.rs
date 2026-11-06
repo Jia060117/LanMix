@@ -21,6 +21,7 @@ use std::{
 mod desktop_notices;
 #[cfg(windows)]
 mod gui;
+mod media;
 mod redundancy;
 use redundancy::Redundancy;
 
@@ -143,6 +144,10 @@ fn main() -> Result<()> {
             seconds,
         }) => {
             let presence = presence();
+            let _media = presence
+                .as_ref()
+                .map(|d| media::Worker::start(d.clone(), to, stream_id))
+                .transpose()?;
             announce(
                 &presence,
                 to,
@@ -201,16 +206,18 @@ fn sender_identity(ready: bool) -> Result<lanmix_discovery::Identity> {
         env!("CARGO_PKG_VERSION"),
     )?;
     identity.ready = ready;
+    identity.media_controls = cfg!(windows);
     Ok(identity)
 }
-fn presence() -> Option<lanmix_discovery::Discovery> {
+fn presence() -> Option<Arc<lanmix_discovery::Discovery>> {
     sender_identity(false)
         .and_then(lanmix_discovery::Discovery::start)
+        .map(Arc::new)
         .map_err(|e| eprintln!("Automatic discovery unavailable (audio can continue): {e:#}"))
         .ok()
 }
 fn announce(
-    discovery: &Option<lanmix_discovery::Discovery>,
+    discovery: &Option<Arc<lanmix_discovery::Discovery>>,
     to: SocketAddr,
     stream: u32,
     state: lanmix_discovery::SessionState,

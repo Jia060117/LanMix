@@ -3,7 +3,6 @@ package io.lanmix.receiver
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -34,6 +33,7 @@ class ReceiverService : Service() {
     }
 
     private val state get() = (application as LanMixApplication).receiver
+    private val discovery get() = (application as LanMixApplication).discovery
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var manager: AudioManager
     private lateinit var engine: PlaybackEngine
@@ -43,7 +43,8 @@ class ReceiverService : Service() {
     private var renewWakeAt = 0L
     private var lastStartId = 0
     private var foreground = false
-    private var notificationText = ""
+    private var notificationKey: Pair<String, RemoteMediaTarget?>? = null
+    private val notificationObserver: () -> Unit = { updateNotification() }
     private var destroyed = false
     private data class SourceDiagnostic(val session: Long, val lost: Long, val late: Long,
         val overflow: Long, val underruns: Long, val resets: Long, val primed: Boolean, val gapFilled: Long)
@@ -135,11 +136,20 @@ class ReceiverService : Service() {
             onEvent = { state.event(it); state.changed() }
         )
         manager.registerAudioDeviceCallback(devices, handler)
+        state.observe(notificationObserver)
+        discovery.observe(notificationObserver)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
-        if (intent?.action == STOP) {
+        if (intent?.action == MEDIA_CONTROL) {
+            if (foreground && state.requested && state.running) {
+                // Re-evaluate the single-device rule at click time, not only while drawing.
+                if (!dispatchMediaIntent(intent, discovery.mediaTarget, discovery::sendMedia)) {
+                    state.event("媒体指令未发送：当前连接已变化或设备不支持")
+                }
+            } else if (!state.requested) stopSelfResult(startId)
+        } else if (intent?.action == STOP) {
             (application as LanMixApplication).discovery.cancelPending()
             state.requested = false
             state.running = false
@@ -209,28 +219,19 @@ class ReceiverService : Service() {
     }
 
     private fun notification(message: String): Notification {
-        val content = PendingIntent.getActivity(this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val stop = PendingIntent.getService(this, 1, Intent(this, ReceiverService::class.java).setAction(STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        return Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_receiver)
-            .setContentTitle(getString(R.string.receiver_notification_title)).setContentText(message)
-            .setContentIntent(content).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
-            .setCategory(Notification.CATEGORY_SERVICE).setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(Notification.Action.Builder(null, getString(R.string.receiver_stop), stop).build())
-            .build()
+        return receiverNotification(this, CHANNEL, message, discovery.mediaTarget)
     }
 
     private fun updateNotification() {
-        if (!foreground) return
+        if (!foreground || destroyed) return
         val text = when {
             !state.requested -> getString(R.string.receiver_notification_stopping)
             state.running -> getString(R.string.receiver_notification_active, state.config?.port ?: 46210)
             else -> getString(R.string.receiver_notification_starting)
         }
-        if (text == notificationText) return
-        notificationText = text
+        val key = text to discovery.mediaTarget
+        if (key == notificationKey) return
+        notificationKey = key
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(text))
     }
 
@@ -243,6 +244,7 @@ class ReceiverService : Service() {
         wakeLock = null
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         foreground = false
+        notificationKey = null
         stopSelfResult(lastStartId)
     }
 
@@ -258,6 +260,8 @@ class ReceiverService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        state.removeObserver(notificationObserver)
+        discovery.removeObserver(notificationObserver)
         (application as LanMixApplication).discovery.service(false)
         handler.removeCallbacksAndMessages(null)
         sources.stop()

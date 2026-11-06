@@ -21,6 +21,7 @@ public final class NativeBridge {
     public native void nativeDiscoveryUpdate(String identity);
     public native String nativeDiscoverySnapshot();
     public native void nativeDiscoveryConnect(String id);
+    public native void nativeDiscoveryMedia(String id, long revision, String action);
     public native void nativeDiscoveryProbe(String address);
     public native void nativeDiscoveryStop();
 
@@ -30,7 +31,7 @@ public final class NativeBridge {
         String identity = "{\"id\":\"" + receiverId + "\",\"name\":\"JNI receiver\",\"role\":\"receiver\","
             + "\"audio_port\":46210,\"ready\":true,\"version\":\"test\"}";
         String hello = "{\"magic\":\"LMXD\",\"protocol\":1,\"kind\":\"hello\",\"peer\":{\"id\":\"" + senderId
-            + "\",\"name\":\"JNI sender\",\"role\":\"sender\",\"audio_port\":0,\"ready\":true,\"version\":\"test\"}}";
+            + "\",\"name\":\"JNI sender\",\"role\":\"sender\",\"audio_port\":0,\"ready\":true,\"version\":\"test\",\"media_controls\":true}}";
         rejected(() -> bridge.nativeDiscoveryUpdate("{}"));
         bridge.nativeDiscoveryUpdate(identity);
         try (DatagramSocket socket = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
@@ -65,6 +66,19 @@ public final class NativeBridge {
                 require(System.nanoTime() < deadline, "silent session crosses JNI without PCM"); Thread.sleep(20);
             }
             require(bridge.nativeSources().equals("[]"), "session does not fabricate an audio source");
+            rejected(() -> bridge.nativeDiscoveryMedia(senderId, 0, "next"));
+            rejected(() -> bridge.nativeDiscoveryMedia(senderId, 1, "volume_up"));
+            rejected(() -> bridge.nativeDiscoveryMedia(senderId, 2, "next"));
+            bridge.nativeDiscoveryMedia(senderId, 1, "next");
+            boolean media = false;
+            deadline = System.nanoTime() + 2_000_000_000L;
+            while (!media && System.nanoTime() < deadline) {
+                incoming.setLength(2048); socket.receive(incoming);
+                String message = new String(incoming.getData(), 0, incoming.getLength(), java.nio.charset.StandardCharsets.UTF_8);
+                media = message.contains("\"kind\":\"media\"") && message.contains("\"target\":\"" + senderId + "\"")
+                    && message.contains("\"action\":\"next\"") && message.contains("\"revision\":1");
+            }
+            require(media, "JNI sends a scoped media command over real UDP without PCM");
             bytes = session.replace("\"connected\"", "\"disconnected\"").replace("\"revision\":1", "\"revision\":2")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
             socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
@@ -72,13 +86,15 @@ public final class NativeBridge {
             while (!bridge.nativeDiscoverySnapshot().contains("\"sessions\":[]")) {
                 require(System.nanoTime() < deadline, "silent disconnect crosses JNI"); Thread.sleep(20);
             }
+            rejected(() -> bridge.nativeDiscoveryMedia(senderId, 1, "play_pause"));
             bytes = session.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             socket.send(new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort()));
             Thread.sleep(100);
             require(bridge.nativeDiscoverySnapshot().contains("\"sessions\":[]"), "late session cannot revive disconnected UI");
         } finally { bridge.nativeDiscoveryStop(); }
         require(bridge.nativeDiscoverySnapshot().contains("\"peers\":[]"), "discovery worker released");
-        System.out.println("JNI discovery: identity/update, UDP probe/reply, connect, silent session/disconnect, revision ordering and stop passed");
+        rejected(() -> bridge.nativeDiscoveryMedia(senderId, 1, "next"));
+        System.out.println("JNI discovery: identity/update, UDP probe/reply, connect, silent session, scoped media command, stale-session rejection and stop passed");
     }
 
     static void require(boolean condition, String message) {
@@ -235,7 +251,7 @@ public final class NativeBridge {
             }
             String snapshot = bridge.nativeTracks();
             require(heard && quietFramesAfterSound > 200, "real missing-packet concealment produces a PCM dip");
-            require(snapshot.contains("\"concealed_frames\":700") && snapshot.contains("\"loss_events\":1"), "lifetime missing-frame diagnostics");
+            require(snapshot.contains("\"concealed_frames\":700") && snapshot.contains("\"loss_events\":1"), "lifetime missing-frame diagnostics: " + snapshot);
             require(snapshot.contains("\"missing_datagrams\":5") && snapshot.contains("\"transport_gap_frames\":700")
                 && snapshot.contains("\"sender_gap_frames\":0"), "sequence diagnostics identify unreceived datagrams");
             require(!java.util.regex.Pattern.compile("\"underruns\":[1-9]").matcher(snapshot).find(), "concealment is not mixer starvation");
@@ -298,6 +314,6 @@ public final class NativeBridge {
                 require(Arrays.equals(block, new float[block.length]), "10 ms fill at " + rate);
             } finally { bridge.nativeStop(); }
         }
-        System.out.println("JNI lifecycle, array validation, JSON, all twelve exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
+        System.out.println("JNI lifecycle, array validation, JSON, all thirteen exports, and 10 ms fills at 8/44.1/48/96/192 kHz passed");
     }
 }

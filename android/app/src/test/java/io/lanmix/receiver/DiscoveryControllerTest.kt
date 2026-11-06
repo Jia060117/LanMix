@@ -26,6 +26,7 @@ class DiscoveryControllerTest {
             return """{"peers":[{"id":"desktop","name":"台式机","role":"sender","address":"192.168.1.20:53000","audio_port":46210,"ready":true}],"sessions":$sessions,"error":null}"""
         }
         override fun connect(id: String) { connections.add(id) }
+        override fun media(id: String, revision: Long, action: String) {}
         override fun probe(address: String) {}
         override fun stop() {}
     }

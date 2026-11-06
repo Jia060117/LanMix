@@ -1,5 +1,14 @@
 # LanMix native Android receiver
 
+Current source/development build: **1.0.4 / version code 14**. With one capable
+Windows sender connected, the ongoing notification adds Previous, Play/Pause and
+Next buttons. Update both endpoints. Controls remain available without PCM, and
+are hidden for multiple/pending connections or legacy senders. Commands use a
+session-scoped, deduplicated UDP control path and Windows system media keys.
+The notification uses MediaStyle without a MediaSession or audio focus request;
+it does not claim track metadata or remote playback state. Windows receiver UI is
+unchanged. This iteration does not publish a new GitHub Release.
+
 Current official Android package: **1.0.3 / version code 13**, paired with the 1.0.3
 Windows sender and compatible with the v1 audio protocol. Official APKs use Jia060117's dedicated release certificate; old debug
 builds require uninstalling before migration. Release signing, dependencies and

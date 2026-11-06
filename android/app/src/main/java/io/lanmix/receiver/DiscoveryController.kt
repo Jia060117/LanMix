@@ -14,13 +14,14 @@ data class NearbyDevice(val id: String, val name: String, val role: String,
     val address: String, val port: Int, val ready: Boolean)
 
 data class DeviceConnection(val id: String, val name: String, val address: String,
-    val streamId: Long, val connected: Boolean)
+    val streamId: Long, val connected: Boolean, val mediaControls: Boolean = false, val revision: Long = 0)
 
 interface DiscoveryBackend {
     val loadError: String?
     fun update(identity: String)
     fun snapshot(): String
     fun connect(id: String)
+    fun media(id: String, revision: Long, action: String)
     fun probe(address: String)
     fun stop()
 }
@@ -30,6 +31,7 @@ private object NativeDiscoveryBackend : DiscoveryBackend {
     override fun update(identity: String) = NativeBridge.nativeDiscoveryUpdate(identity)
     override fun snapshot() = NativeBridge.nativeDiscoverySnapshot()
     override fun connect(id: String) = NativeBridge.nativeDiscoveryConnect(id)
+    override fun media(id: String, revision: Long, action: String) = NativeBridge.nativeDiscoveryMedia(id, revision, action)
     override fun probe(address: String) = NativeBridge.nativeDiscoveryProbe(address)
     override fun stop() = NativeBridge.nativeDiscoveryStop()
 }
@@ -121,7 +123,8 @@ class DiscoveryController(private val context: Context, private val receiver: Re
                 val state = session.optString("state")
                 if (state == "connected" || state == "connecting") {
                     val connection = DeviceConnection(session.getString("id"), session.getString("name"),
-                        session.getString("address"), session.optLong("stream_id", 1), state == "connected")
+                        session.getString("address"), session.optLong("stream_id", 1), state == "connected",
+                        session.optBoolean("media_controls"), session.optLong("revision"))
                     live.add(connection)
                     requested.remove(connection.id)
                 }
@@ -158,6 +161,17 @@ class DiscoveryController(private val context: Context, private val receiver: Re
         handler.removeCallbacks(poll); handler.post(poll)
     }
     fun cancelPending() { lease.cancel(); requested.clear(); connections = emptyList(); reconcile(); changed() }
+    val mediaTarget: RemoteMediaTarget?
+        get() = if (active && receiver.requested && receiver.running)
+            remoteMediaTarget(connections, receiver.sources) else null
+
+    fun sendMedia(target: RemoteMediaTarget, action: RemoteMediaAction): Boolean {
+        if (mediaTarget != target) return false
+        return runCatching {
+            backend.media(target.id, target.revision, action.wire)
+            receiver.event("已发送媒体指令：${action.label} · ${target.name}")
+        }.onFailure { receiver.event("媒体控制未发送：${it.message}") }.isSuccess
+    }
     fun probe(host: String): Boolean = runCatching {
         val parts = host.trim().split(".")
         require(parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.all(Char::isDigit) && (p.toIntOrNull() ?: -1) in 0..255 }) {
