@@ -1,5 +1,5 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_lanmix" />
+    <background android:drawable="@drawable/ic_lanmix_background" />
     <foreground android:drawable="@drawable/ic_lanmix" />
-    <monochrome android:drawable="@drawable/ic_receiver" />
+    <monochrome android:drawable="@drawable/ic_lanmix_mono" />
 </adaptive-icon>

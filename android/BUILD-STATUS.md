@@ -1,5 +1,16 @@
 # Verified Android build
 
+## Official 1.0.3 visual identity · 2026-11-06
+
+- Package `io.lanmix.receiver`, **1.0.3 / version code 13**, minimum API 26 / target 37, non-debuggable release.
+- Release asset: `LanMix-1.0.3-android.apk`, **2,220,377 bytes**.
+- SHA-256: `a5184933a072176b1248b35f52f5e830f2ab4890dc9095fefe95c4b14a56fc9c`.
+- Shared original slider icon across the repository and desktop/mobile apps. Adaptive launcher background and foreground are separate; themed launcher and foreground-service notification use matching monochrome marks.
+- Full dual-ABI JNI build; Debug / Release each passed **84 Kotlin tests**, assembly and lint (**38 / 37 warnings, 0 errors**). The preview fixture now freezes discovery before installing demo sources, and asserts the selected source and active EQ survive animation rendering.
+- APK v2 signature and ZIP / ARM ELF 16 KiB alignment pass. Publisher certificate remains `CN=Jia060117, OU=LanMix, O=Jia060117`, SHA-256 `d84eb2c373f642cc1716b92d55c5fb65a903932dd4a264c1fd91a954105e44ed`; official installations can upgrade in place.
+- All seven packaged license/dependency assets match the source. Host JVM `-Xcheck:jni` passes all twelve exports and real UDP lifecycle / control / mixed-rate checks.
+- README previews come from the current Android Views / Canvas code with demo sources. No device interaction, physical upgrade, GPU glass or listening acceptance was performed this round.
+
 ## 1.0.3 connection feedback · 2026-11-06
 
 - Package `io.lanmix.receiver`, **1.0.3 / version code 13**, minimum API 26 / target 37, non-debuggable release.

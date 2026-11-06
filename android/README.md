@@ -1,11 +1,18 @@
 # LanMix native Android receiver
 
-Current Android package: **1.0.2 / version code 12**, compatible with the 1.0.0 Windows
-sender. The published GitHub Release remains 1.0.0. Official APKs use Jia060117's dedicated release certificate; old debug
+Current official Android package: **1.0.3 / version code 13**, paired with the 1.0.3
+Windows sender and compatible with the v1 audio protocol. Official APKs use Jia060117's dedicated release certificate; old debug
 builds require uninstalling before migration. Release signing, dependencies and
 build instructions: [BUILDING.md](../docs/BUILDING.md). The historical UI notes
 below describe the preceding iterations. Default 20 ms byte-identical backups
 and the v1 protocol are unchanged.
+
+1.0.3 shows a device as soon as a connection is requested, then confirms capture
+readiness independently of the first PCM packet. Waiting and receiving states share
+one device entry. Launcher, themed and notification icons use the shared original
+slider mark from `assets/branding/lanmix.svg`. Current layout previews are linked
+from the repository README; their software rendering does not establish GPU glass
+appearance or physical listening acceptance. Debug / Release each pass 84 tests.
 
 1.0.2 separates source admission from 750 ms diagnostic refreshes. A lightweight
 JNI topology snapshot is checked every 50 ms by the service, restoring saved

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="512" height="512" role="img" aria-labelledby="title">
+  <title id="title">LanMix</title>
+  <rect width="108" height="108" rx="24" fill="#162339"/>
+  <g stroke="#87C1FF" stroke-linecap="round" stroke-width="5">
+    <line x1="35" y1="37" x2="35" y2="71"/>
+    <line x1="54" y1="30" x2="54" y2="78"/>
+    <line x1="73" y1="37" x2="73" y2="71"/>
+  </g>
+  <g fill="#162339" stroke="#87C1FF" stroke-width="4">
+    <circle cx="35" cy="44" r="5"/>
+    <circle cx="54" cy="64" r="5"/>
+    <circle cx="73" cy="49" r="5"/>
+  </g>
+</svg>

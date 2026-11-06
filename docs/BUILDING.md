@@ -7,6 +7,8 @@
 
 需要 Rust / MSVC C++ 工具链和 Python 3.11+。CI 固定 Rust 1.99.1；本次本地
 验证另有 Rust 1.97.1。使用仓库的 Cargo.lock，不要为了发布刷新全部依赖。
+MSVC 工具链需包含 Windows SDK 的 `rc.exe`，用于内置统一 ICO 和版本 / 发布者信息。
+图标资源的生成方式见 [品牌素材](../assets/branding/README.md)。
 
 ```powershell
 cargo fmt --all -- --check

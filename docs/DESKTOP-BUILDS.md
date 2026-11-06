@@ -3,7 +3,7 @@
 v1.0.0 起 Windows 与 Android 统一正式版本。正式下载只提供这两个平台，
 入口见 [Releases](https://github.com/Jia060117/LanMix/releases/latest)。下文的
 Actions 产物属于开发构建，包含尚未完成实体音频验收的 Linux / macOS。
-开发下载包带 Git 提交号，避免混淆不同提交的程序；音频协议保持兼容。
+开发构建日志记录 Git 提交号，其他平台的归档名也带提交号；音频协议保持兼容。
 
 ## 获取程序
 

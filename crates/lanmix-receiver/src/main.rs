@@ -693,6 +693,12 @@ fn main() -> Result<()> {
     }
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!(
+                    "../../../assets/branding/lanmix.png"
+                ))
+                .expect("embedded LanMix icon"),
+            )
             .with_inner_size([1100.0, 780.0])
             .with_min_inner_size([960.0, 600.0]),
         ..Default::default()

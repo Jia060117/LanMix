@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/branding/lanmix.png" width="104" height="104" alt="LanMix 图标" />
+
 # LanMix
 
 **让每台设备的声音，都有一个共同的出口。**
@@ -20,12 +22,29 @@
 耳机连接手机时，也想听到台式机、笔记本上的声音？LanMix 通过局域网接收这些设备的
 系统音频，在接收端混音，再交给当前耳机、音箱或 USB 声卡播放。
 
-**v1.0.0 正式版提供 Windows x64 和 Android 安装包。** 项目以多设备聚合、
+**v1.0.3 正式版提供两个 Windows x64 独立程序和 Android 安装包。** 项目以多设备聚合、
 音质和稳定播放为优先，持续完善界面与设备兼容性。
 
-当前 Windows / Android 源码为 **1.0.3**：Windows 增加按钮反馈、连接状态卡片和
-托盘连接 / 断开 / 重连；Android 在连接时就显示设备，无需等到电脑出声。
-沿用单一调音编辑器和 EQ 预设。本轮更新尚未替换正式下载。
+Windows 提供按钮反馈、连接状态卡片和托盘操作；Android 在连接时就显示设备，
+无需等到电脑出声。两端与仓库统一使用调音推子图标。
+
+## 界面预览
+
+<table>
+  <tr>
+    <th align="center">混音 · 浅色</th>
+    <th align="center">混音 · 深色</th>
+    <th align="center">独立调音 · 10 段 EQ</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/mixer-light.png" width="260" alt="Android 浅色混音页预览" /></td>
+    <td align="center"><img src="docs/images/mixer-dark.png" width="260" alt="Android 深色混音页预览" /></td>
+    <td align="center"><img src="docs/images/equalizer-dark.png" width="260" alt="Android 单设备均衡器与人声预设预览" /></td>
+  </tr>
+</table>
+
+以上为当前 Android 界面代码的离线渲染，地址与音源为演示数据；底栏使用软件绘制回退，
+实机玻璃折射随系统与 GPU 支持变化。[素材与生成方式](docs/images/README.md)
 
 ## 能做什么
 
@@ -48,8 +67,8 @@ Windows 发送窗口使用 Rust / Win32，无 WebView。Android 使用原生 Kot
 
 | 平台 | 正式下载 | 说明 |
 |---|---|---|
-| Windows 10 / 11 x64 | `lanmix-sender.exe` / `lanmix-receiver.exe` | 两个独立程序，按需下载；发送端兼具窗口与命令行 |
-| Android 8.0+ / API 26+ | `LanMix-1.0.0-android.apk` | ARM64 / ARMv7 双架构，无需 Root；Android 17+ 需允许本地网络访问 |
+| Windows 10 / 11 x64 | [发送端 EXE](https://github.com/Jia060117/LanMix/releases/download/v1.0.3/lanmix-sender.exe) · [接收端 EXE](https://github.com/Jia060117/LanMix/releases/download/v1.0.3/lanmix-receiver.exe) | 两个独立程序，按需下载；发送端兼具窗口与命令行 |
+| Android 8.0+ / API 26+ | [Android APK](https://github.com/Jia060117/LanMix/releases/download/v1.0.3/LanMix-1.0.3-android.apk) | ARM64 / ARMv7 双架构，无需 Root；Android 17+ 需允许本地网络访问 |
 | Linux / macOS | 暂不提供正式版 | 有 CI 开发构建，尚未完成实体音频设备验收；macOS 系统声音采集未实现 |
 | iOS / iPadOS | 暂不支持 | 尚无可安装 App 工程 |
 
@@ -101,8 +120,7 @@ Android 1.0.1 及更新版本的「混音」页只保留一处「调音」：先
 10 段竖向推子，或选择平直、低音增强、人声、流行、摇滚、古典预设。每个调音对象
 的设置独立保留；预放大收在「高级 · 输出余量」。
 
-v1.0.0 接收端仍在各音源卡片中调整音量及均衡器。输出设备、实际路由、系统报告的
-格式和详细诊断统一在「设置」查看。
+输出设备、实际路由、系统报告的格式和详细诊断统一在「设置」查看。
 
 日常使用建议保留 **稳定优先 + 150 ms 初始网络缓冲**。网络缓冲会按抖动调整；
 均衡、响应模式仍属于试验选项。调高 EQ 前可适当降低预放大，避免叠加后削波。

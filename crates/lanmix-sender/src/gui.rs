@@ -1033,35 +1033,16 @@ unsafe fn draw_text(dc: HDC, font: HFONT, text: &str, rect: &RECT, color: u32, f
     }
 }
 unsafe fn brand_icon() -> HICON {
-    // Original waveform mark, rendered in Rust into BGRA.
-    let mut pixels = [0u8; 32 * 32 * 4];
-    for y in 0..32 {
-        for x in 0..32 {
-            let i = (y * 32 + x) * 4;
-            let inside = (x as f32 - 15.5).powi(2) + (y as f32 - 15.5).powi(2) < 15.0f32.powi(2);
-            if inside {
-                pixels[i..i + 4].copy_from_slice(&[222, 103, 62, 255]);
-            }
-            if inside
-                && ((7..10).contains(&x) && (13..19).contains(&y)
-                    || (12..15).contains(&x) && (8..24).contains(&y)
-                    || (17..20).contains(&x) && (5..27).contains(&y)
-                    || (22..25).contains(&x) && (11..21).contains(&y))
-            {
-                pixels[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
-            }
-        }
-    }
+    // The file, window and tray all use resource 1 from the shared brand ICO.
     unsafe {
-        CreateIcon(
+        LoadImageW(
             GetModuleHandleW(null()),
+            std::ptr::without_provenance(1),
+            IMAGE_ICON,
             32,
             32,
-            1,
-            32,
-            [0u8; 128].as_ptr(),
-            pixels.as_ptr(),
-        )
+            LR_DEFAULTCOLOR,
+        ) as HICON
     }
 }
 
@@ -1323,6 +1304,7 @@ pub fn run() -> Result<()> {
         let background = CreateSolidBrush(BG);
         let white = CreateSolidBrush(rgb(255, 255, 255));
         let icon = brand_icon();
+        ensure!(!icon.is_null(), "load LanMix window icon");
         let identity = sender_identity(true)?;
         let discovery = Discovery::start(identity.clone());
         let error = discovery

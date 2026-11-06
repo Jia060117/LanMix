@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.ScrollView
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -53,6 +54,9 @@ class UiPreviewTest {
                     } finally { bitmap.recycle() }
                 }
                 capture("mixer")
+                // Freeze background discovery before installing the offline UI fixture.
+                // Otherwise its next poll removes these host-only demo sources.
+                controller.pause().stop()
                 val mix = (activity.application as LanMixApplication).receiver.mix
                 mix.bindTrack(0, "192.168.1.20", 1); mix.bindTrack(1, "192.168.1.30", 1)
                 mix.tracks[0].gainDb = -3f; mix.tracks[1].gainDb = -8f
@@ -62,6 +66,8 @@ class UiPreviewTest {
                 texts(root).single { it.text.toString().startsWith("音效 ·") }.performClick()
                 descendants(root).filterIsInstance<MixerChip>().single { it.text.toString() == "人声" }.performClick()
                 shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(250))
+                assertEquals("192.168.1.30/1", panel.selectedSourceKey)
+                assertTrue(mix.tracks[1].eqEnabled)
                 root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(2400, View.MeasureSpec.EXACTLY))
                 root.layout(0, 0, 1080, 2400)
